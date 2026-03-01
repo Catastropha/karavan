@@ -34,8 +34,8 @@ class OrchestratorAgent(BaseAgent):
         self._repo_dirs: list[Path] = []
 
     def should_process_webhook(self, list_id: str) -> bool:
-        """Process webhooks when a card enters any known done list."""
-        return list_id in settings.done_list_ids
+        """Process webhooks when a card enters any known done or failed list."""
+        return list_id in settings.done_list_ids or list_id == settings.failed_list_id
 
     async def start(self) -> None:
         """Clone repos and start the Claude SDK client before the run loop."""
@@ -83,11 +83,15 @@ class OrchestratorAgent(BaseAgent):
             logger.info("Orchestrator %s: Claude SDK client stopped", self.name)
 
     async def _process(self, item: object) -> None:
-        """Process a queue item — either a BotMessage or a done-list webhook event."""
+        """Process a queue item — BotMessage, done-list event, or failed-list event."""
         if isinstance(item, BotMessage):
             await self._handle_user_message(item)
         elif isinstance(item, dict) and item.get("action_type"):
-            await self._handle_done_event(item)
+            list_after_id = item.get("list_after_id", "")
+            if list_after_id == settings.failed_list_id:
+                await self._handle_failed_event(item)
+            else:
+                await self._handle_done_event(item)
         else:
             logger.warning("Orchestrator %s received unknown item type: %s", self.name, type(item))
 
@@ -151,3 +155,16 @@ class OrchestratorAgent(BaseAgent):
                 await send_message(user_id, text)
             except Exception:
                 logger.exception("Failed to notify user %d about completed card", user_id)
+
+    async def _handle_failed_event(self, event: dict) -> None:
+        """Handle a card-moved-to-failed webhook event — notify user via Telegram."""
+        card_name = event.get("card_name", "Unknown card")
+        card_id = event.get("card_id", "")
+        logger.info("Orchestrator %s: card '%s' (%s) moved to failed", self.name, card_name, card_id)
+
+        for user_id in settings.telegram_allowed_user_ids:
+            try:
+                text = escape_markdown_v2(f"Card failed: {card_name} — agent produced no code changes.")
+                await send_message(user_id, text)
+            except Exception:
+                logger.exception("Failed to notify user %d about failed card", user_id)

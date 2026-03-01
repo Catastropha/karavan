@@ -29,6 +29,7 @@
         "git@github.com:user/myproject-api.git",
         "git@github.com:user/myproject-static.git"
       ],
+      "failed_list_id": "trello_list_id",
       "system_prompt": "You are an engineering lead. Break features into clear tasks for worker agents."
     }
   }

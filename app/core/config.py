@@ -40,6 +40,7 @@ class OrchestratorAgentConfig(BaseModel):
     type: Annotated[Literal["orchestrator"], Field(description="Agent type")]
     board_id: Annotated[str, Field(min_length=1, description="Trello board ID")]
     repos: Annotated[list[str], Field(min_items=1, description="Git repo SSH URLs for read access")]
+    failed_list_id: Annotated[str, Field(min_length=1, description="Shared Trello list ID for failed cards")]
     system_prompt: Annotated[str, Field(default="", description="System prompt for Claude")]
 
 
@@ -116,6 +117,14 @@ class Settings(BaseSettings):
     def done_list_ids(self) -> set[str]:
         """Return all known 'done' list IDs across workers."""
         return {v.lists.done for v in self.worker_agents.values()}
+
+    @property
+    def failed_list_id(self) -> str | None:
+        """Return the shared failed list ID from the orchestrator config, or None."""
+        orch = self.orchestrator_agent
+        if orch:
+            return orch[1].failed_list_id
+        return None
 
 
 settings = Settings()

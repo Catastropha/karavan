@@ -12,7 +12,7 @@ from app.apps.git_manager.crud.update import commit_and_push, create_pr, pull_de
 from app.apps.git_manager.model.input import PRCreateIn
 from app.apps.trello.crud.read import get_card
 from app.apps.trello.crud.update import add_comment, move_card
-from app.core.config import BASE_DIR, WorkerAgentConfig
+from app.core.config import BASE_DIR, WorkerAgentConfig, settings
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,13 @@ class WorkerAgent(BaseAgent):
 
             # 5. Commit and push
             commit_msg = f"[karavan] {card.name}\n\n{card.url}"
-            await commit_and_push(self.repo_dir, branch_name, commit_msg)
+            has_changes = await commit_and_push(self.repo_dir, branch_name, commit_msg)
+
+            if not has_changes:
+                logger.warning("Worker %s: agent produced no changes for card '%s'", self.name, card.name)
+                await add_comment(card_id, "Agent completed but produced no code changes.")
+                await move_card(card_id, settings.failed_list_id)
+                return
 
             # 6. Create PR
             pr = await create_pr(PRCreateIn(

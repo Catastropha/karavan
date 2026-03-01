@@ -19,7 +19,7 @@ Weaknesses and improvements identified from a full codebase analysis. Work throu
 - **Fix:** Build a rich prompt template that includes: role framing, repo/branch context, explicit instructions on what to do and what not to do (no git operations), and how to signal completion.
 
 ### 3. No validation that the agent produced changes
-- **Status:** TODO
+- **Status:** DONE
 - **File(s):** `app/apps/agent/worker.py:107`, `app/apps/git_manager/crud/update.py`
 - **Problem:** After the SDK returns, `commit_and_push` silently skips commit if there are no changes (`git diff --cached --quiet`), then still tries to push and create a PR. Results in empty PRs or errors.
 - **Fix:** Check for changes after the agent runs. If none, comment on the card that the agent made no changes and move to a review/failed state instead of blindly proceeding.

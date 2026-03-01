@@ -19,8 +19,8 @@ async def pull_dev(repo_dir: str | Path) -> None:
     logger.info("Pulled dev in %s", repo_dir)
 
 
-async def commit_and_push(repo_dir: str | Path, branch_name: str, message: str) -> None:
-    """Stage all changes, commit, and push to remote."""
+async def commit_and_push(repo_dir: str | Path, branch_name: str, message: str) -> bool:
+    """Stage all changes, commit, and push to remote. Returns True if changes were committed, False if none."""
     await _run_git(["git", "add", "-A"], cwd=repo_dir)
 
     # Check if there are changes to commit
@@ -33,11 +33,12 @@ async def commit_and_push(repo_dir: str | Path, branch_name: str, message: str) 
     await proc.communicate()
     if proc.returncode == 0:
         logger.info("No changes to commit in %s", repo_dir)
-        return
+        return False
 
     await _run_git(["git", "commit", "-m", message], cwd=repo_dir)
     await _run_git(["git", "push", "-u", "origin", branch_name], cwd=repo_dir)
     logger.info("Committed and pushed %s in %s", branch_name, repo_dir)
+    return True
 
 
 async def create_pr(pr_in: PRCreateIn) -> PROut:

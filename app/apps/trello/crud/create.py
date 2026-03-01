@@ -2,23 +2,18 @@
 
 import logging
 
+from app.apps.trello.crud import auth_params
 from app.apps.trello.model.input import CardCreateIn
 from app.apps.trello.model.output import CardOut, WebhookOut
-from app.core.config import settings
 from app.core.resource import res
 
 logger = logging.getLogger(__name__)
 
 
-def _auth_params() -> dict[str, str]:
-    """Return Trello auth query params."""
-    return {"key": settings.trello_api_key, "token": settings.trello_token}
-
-
 async def create_card(card_in: CardCreateIn) -> CardOut:
     """Create a new Trello card."""
     params = {
-        **_auth_params(),
+        **auth_params(),
         "name": card_in.name,
         "desc": card_in.desc,
         "idList": card_in.id_list,
@@ -34,7 +29,7 @@ async def create_card(card_in: CardCreateIn) -> CardOut:
 async def register_webhook(model_id: str, callback_url: str, description: str = "") -> WebhookOut:
     """Register a Trello webhook on a board or list."""
     params = {
-        **_auth_params(),
+        **auth_params(),
         "callbackURL": callback_url,
         "idModel": model_id,
         "description": description,
