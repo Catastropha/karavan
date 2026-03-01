@@ -13,7 +13,7 @@ Weaknesses and improvements identified from a full codebase analysis. Work throu
 - **Fix:** Expose Trello card creation (and status checking, worker listing, etc.) as custom tools the SDK agent can invoke, or parse structured output from the orchestrator and create cards programmatically in the harness.
 
 ### 2. Worker prompt lacks operational context
-- **Status:** TODO
+- **Status:** DONE
 - **File(s):** `app/apps/agent/worker.py:85`
 - **Problem:** The prompt is just `## Card: {card.name}\n\n{card.desc}`. The agent doesn't know: it should write code (not explain), what repo it's in, what branch it's on, that it must NOT commit/push (the harness does that), or how to interpret acceptance criteria.
 - **Fix:** Build a rich prompt template that includes: role framing, repo/branch context, explicit instructions on what to do and what not to do (no git operations), and how to signal completion.

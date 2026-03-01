@@ -82,7 +82,30 @@ class WorkerAgent(BaseAgent):
             await create_branch(self.repo_dir, branch_name)
 
             # 4. Run Claude Agent SDK
-            prompt = f"## Card: {card.name}\n\n{card.desc}"
+            prompt = (
+                f"# Task: {card.name}\n"
+                f"\n"
+                f"You are a worker agent in the Karavan system. Your job is to **write code** that fulfills the task below.\n"
+                f"\n"
+                f"## Environment\n"
+                f"- **Repository:** `{self.owner}/{self.repo_name}`\n"
+                f"- **Working directory:** `{self.repo_dir}`\n"
+                f"- **Branch:** `{branch_name}` (already checked out)\n"
+                f"\n"
+                f"## Rules\n"
+                f"- **DO** read existing code to understand patterns before making changes.\n"
+                f"- **DO** write clean, production-quality code that fits the existing codebase style.\n"
+                f"- **DO** create or modify tests if the project has a test suite.\n"
+                f"- **DO NOT** run any git commands (no `git add`, `git commit`, `git push`, `git checkout`, etc.). The harness handles all git operations after you finish.\n"
+                f"- **DO NOT** just explain what to do — actually write the code.\n"
+                f"- **DO NOT** modify files unrelated to this task.\n"
+                f"\n"
+                f"## Card Description\n"
+                f"{card.desc}\n"
+                f"\n"
+                f"## Completion\n"
+                f"When you are done, briefly summarize what files you changed and why. The harness will commit, push, and open a PR automatically.\n"
+            )
             result_text = ""
             async for message in query(
                 prompt=prompt,
