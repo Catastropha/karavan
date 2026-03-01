@@ -6,6 +6,7 @@ from pathlib import Path
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
 from app.apps.agent.base import BaseAgent
+from app.apps.agent.tools import build_orchestrator_mcp_server
 from app.apps.bot.crud.create import send_message, send_typing_action
 from app.apps.bot.markdown import escape_markdown_v2
 from app.apps.git_manager.crud.create import clone_repo
@@ -49,10 +50,17 @@ class OrchestratorAgent(BaseAgent):
                 logger.warning("Failed to pull dev for %s, using existing clone", repo_name)
             self._repo_dirs.append(repo_dir)
 
-        # Create Claude SDK client with read-only access to all repos
+        # Build MCP server with Trello orchestration tools
+        mcp_server = build_orchestrator_mcp_server()
+
+        # Create Claude SDK client with read access to repos + Trello tools
         self._client = ClaudeSDKClient(options=ClaudeAgentOptions(
             add_dirs=[str(d) for d in self._repo_dirs],
-            allowed_tools=["Read", "Glob", "Grep"],
+            allowed_tools=[
+                "Read", "Glob", "Grep",
+                "list_workers", "create_trello_card", "get_card_status", "get_worker_cards",
+            ],
+            mcp_servers={"karavan": mcp_server},
             system_prompt={
                 "type": "preset",
                 "preset": "claude_code",
