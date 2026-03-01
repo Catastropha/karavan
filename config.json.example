@@ -1,0 +1,35 @@
+{
+  "agents": {
+    "api": {
+      "type": "worker",
+      "lists": {
+        "todo": "trello_list_id",
+        "doing": "trello_list_id",
+        "done": "trello_list_id"
+      },
+      "repo": "git@github.com:user/myproject-api.git",
+      "branch_prefix": "agent/api",
+      "system_prompt": "You are a FastAPI backend developer. Follow existing patterns in the codebase."
+    },
+    "static": {
+      "type": "worker",
+      "lists": {
+        "todo": "trello_list_id",
+        "doing": "trello_list_id",
+        "done": "trello_list_id"
+      },
+      "repo": "git@github.com:user/myproject-static.git",
+      "branch_prefix": "agent/static",
+      "system_prompt": "You are a frontend developer. Use the existing component library."
+    },
+    "orchestrator": {
+      "type": "orchestrator",
+      "board_id": "trello_board_id",
+      "repos": [
+        "git@github.com:user/myproject-api.git",
+        "git@github.com:user/myproject-static.git"
+      ],
+      "system_prompt": "You are an engineering lead. Break features into clear tasks for worker agents."
+    }
+  }
+}

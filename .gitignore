@@ -1,3 +1,6 @@
+# Cloned repos (agent workdirs)
+repos/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
