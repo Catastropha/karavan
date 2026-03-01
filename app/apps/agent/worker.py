@@ -8,7 +8,7 @@ from claude_agent_sdk import ClaudeAgentOptions, query
 
 from app.apps.agent.base import BaseAgent
 from app.apps.git_manager.crud.create import clone_repo, create_branch
-from app.apps.git_manager.crud.update import commit_and_push, create_pr, pull_main
+from app.apps.git_manager.crud.update import commit_and_push, create_pr, pull_dev
 from app.apps.git_manager.model.input import PRCreateIn
 from app.apps.trello.crud.read import get_card
 from app.apps.trello.crud.update import add_comment, move_card
@@ -30,7 +30,7 @@ class WorkerAgent(BaseAgent):
 
     Lifecycle per card:
     1. Move card to doing
-    2. git pull origin main
+    2. git pull origin dev
     3. git checkout -b {branch_prefix}/card-{id}
     4. Claude Agent SDK query() with card description
     5. git commit + push
@@ -74,9 +74,9 @@ class WorkerAgent(BaseAgent):
             # 1. Move to doing
             await move_card(card_id, self.config.lists.doing)
 
-            # 2. Ensure repo is cloned, pull main
+            # 2. Ensure repo is cloned, pull dev
             await clone_repo(self.config.repo, self.repo_dir)
-            await pull_main(self.repo_dir)
+            await pull_dev(self.repo_dir)
 
             # 3. Create feature branch
             await create_branch(self.repo_dir, branch_name)
@@ -113,7 +113,7 @@ class WorkerAgent(BaseAgent):
                 title=f"[karavan] {card.name}",
                 body=f"Trello card: {card.url}\n\n{result_text[:1000] if result_text else 'Automated by Karavan agent.'}",
                 head=branch_name,
-                base="main",
+                base="dev",
             ))
 
             # 7. Comment PR link on card

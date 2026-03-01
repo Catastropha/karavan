@@ -9,7 +9,7 @@ from app.apps.agent.base import BaseAgent
 from app.apps.bot.crud.create import send_message, send_typing_action
 from app.apps.bot.markdown import escape_markdown_v2
 from app.apps.git_manager.crud.create import clone_repo
-from app.apps.git_manager.crud.update import pull_main
+from app.apps.git_manager.crud.update import pull_dev
 from app.common.model.input import BotMessage
 from app.core.config import BASE_DIR, OrchestratorAgentConfig, settings
 
@@ -44,9 +44,9 @@ class OrchestratorAgent(BaseAgent):
             repo_dir = BASE_DIR / "repos" / "orchestrator" / repo_name
             await clone_repo(repo_url, repo_dir)
             try:
-                await pull_main(repo_dir)
+                await pull_dev(repo_dir)
             except Exception:
-                logger.warning("Failed to pull main for %s, using existing clone", repo_name)
+                logger.warning("Failed to pull dev for %s, using existing clone", repo_name)
             self._repo_dirs.append(repo_dir)
 
         # Create Claude SDK client with read-only access to all repos
@@ -98,7 +98,7 @@ class OrchestratorAgent(BaseAgent):
             # Pull latest from all repos before processing
             for repo_dir in self._repo_dirs:
                 try:
-                    await pull_main(repo_dir)
+                    await pull_dev(repo_dir)
                 except Exception:
                     pass
 
