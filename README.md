@@ -1,2 +1,2 @@
 # karavan
-Caravan of agents
+A caravan of camels (agents)
