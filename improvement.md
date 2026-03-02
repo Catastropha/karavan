@@ -57,7 +57,7 @@ Weaknesses and improvements identified from a full codebase analysis. Work throu
 ## P2 — Moderate (Degrades quality and visibility)
 
 ### 8. No card deduplication
-- **Status:** TODO
+- **Status:** DONE
 - **File(s):** `app/apps/agent/worker.py`, `app/apps/agent/base.py`
 - **Problem:** Nothing prevents the same card from being queued and processed multiple times concurrently (from duplicate webhooks, retries, or race conditions).
 - **Fix:** Maintain an in-progress set of card IDs per agent. Skip processing if the card is already being worked on. Clear on completion or failure.

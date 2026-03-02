@@ -47,6 +47,7 @@ class WorkerAgent(BaseAgent):
         self.config = config
         self.repo_dir = BASE_DIR / "repos" / name
         self.owner, self.repo_name = _parse_repo_url(config.repo)
+        self._processed_cards: set[str] = set()
 
     def should_process_webhook(self, list_id: str) -> bool:
         """Process webhooks when a card enters this worker's todo list."""
@@ -63,6 +64,10 @@ class WorkerAgent(BaseAgent):
             logger.warning("Worker %s received item without card_id", self.name)
             return
 
+        if card_id in self._processed_cards:
+            logger.debug("Worker %s skipping duplicate event for card %s", self.name, card_id)
+            return
+
         await self._execute_card(card_id)
 
     async def _count_failures(self, card_id: str) -> int:
@@ -76,6 +81,15 @@ class WorkerAgent(BaseAgent):
     async def _execute_card(self, card_id: str) -> None:
         """Full card execution lifecycle."""
         card = await get_card(card_id)
+
+        if card.id_list != self.config.lists.todo:
+            logger.info(
+                "Worker %s skipping card '%s' — not in todo list",
+                self.name, card.name,
+            )
+            return
+
+        self._processed_cards.add(card_id)
         card_id_short = card_id[-6:]
         branch_name = f"{self.config.branch_prefix}/card-{card_id_short}"
 
@@ -183,6 +197,7 @@ class WorkerAgent(BaseAgent):
                         f"{FAIL_PREFIX} {attempt_msg}, will retry. "
                         f"Agent {self.name} failed to process this card. Check server logs.",
                     )
+                    self._processed_cards.discard(card_id)
                     await move_card(card_id, self.config.lists.todo)
             except Exception:
                 logger.exception("Failed to handle failure for card %s", card_id)
