@@ -19,7 +19,7 @@ async def update_card(card_id: str, *, id_list: str = "", desc: str | None = Non
     resp = await res.trello_client.put(f"cards/{card_id}", params=params)
     resp.raise_for_status()
     logger.info("Updated card %s", card_id)
-    return CardOut(**resp.json())
+    return CardOut.model_validate(resp.json())
 
 
 async def add_comment(card_id: str, text: str) -> dict:

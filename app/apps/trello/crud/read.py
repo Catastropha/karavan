@@ -13,14 +13,14 @@ async def get_card(card_id: str) -> CardOut:
     """Fetch a single Trello card by ID."""
     resp = await res.trello_client.get(f"cards/{card_id}", params=auth_params())
     resp.raise_for_status()
-    return CardOut(**resp.json())
+    return CardOut.model_validate(resp.json())
 
 
 async def get_list_cards(list_id: str) -> list[CardOut]:
     """Fetch all cards in a Trello list."""
     resp = await res.trello_client.get(f"lists/{list_id}/cards", params=auth_params())
     resp.raise_for_status()
-    return [CardOut(**c) for c in resp.json()]
+    return [CardOut.model_validate(c) for c in resp.json()]
 
 
 async def get_card_actions(card_id: str, action_filter: str = "commentCard") -> list[dict]:
@@ -36,4 +36,4 @@ async def get_token_webhooks() -> list[WebhookOut]:
     params = auth_params()
     resp = await res.trello_client.get(f"tokens/{params['token']}/webhooks", params=params)
     resp.raise_for_status()
-    return [WebhookOut(**w) for w in resp.json()]
+    return [WebhookOut.model_validate(w) for w in resp.json()]

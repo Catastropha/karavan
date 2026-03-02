@@ -37,7 +37,7 @@ async def telegram_webhook(secret: str, request: Request) -> HookTelegramPostOut
 
     try:
         body = await request.json()
-        update = TelegramUpdate(**body)
+        update = TelegramUpdate.model_validate(body)
     except Exception:
         logger.warning("Failed to parse Telegram update payload")
         return HookTelegramPostOut()
@@ -48,13 +48,14 @@ async def telegram_webhook(secret: str, request: Request) -> HookTelegramPostOut
             logger.warning("Ignoring message from unauthorized user %d", user_id)
             return HookTelegramPostOut()
 
-        bot_msg = BotMessage(
-            chat_id=update.message.chat.id,
-            user_id=user_id,
-            username=update.message.from_.first_name,
-            text=update.message.text,
-            message_id=update.message.message_id,
-        )
+        bot_msg_data = {
+            "chat_id": update.message.chat.id,
+            "user_id": user_id,
+            "username": update.message.from_.first_name,
+            "text": update.message.text,
+            "message_id": update.message.message_id,
+        }
+        bot_msg = BotMessage.model_validate(bot_msg_data)
 
         if _orchestrator_queue is not None:
             await _orchestrator_queue.put(bot_msg)

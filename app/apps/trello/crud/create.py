@@ -23,7 +23,7 @@ async def create_card(card_in: CardCreateIn) -> CardOut:
     resp = await res.trello_client.post("cards", params=params)
     resp.raise_for_status()
     logger.info("Created card '%s' in list %s", card_in.name, card_in.id_list)
-    return CardOut(**resp.json())
+    return CardOut.model_validate(resp.json())
 
 
 async def register_webhook(model_id: str, callback_url: str, description: str = "") -> WebhookOut:
@@ -37,4 +37,4 @@ async def register_webhook(model_id: str, callback_url: str, description: str = 
     resp = await res.trello_client.post("webhooks", params=params)
     resp.raise_for_status()
     logger.info("Registered webhook for model %s -> %s", model_id, callback_url)
-    return WebhookOut(**resp.json())
+    return WebhookOut.model_validate(resp.json())

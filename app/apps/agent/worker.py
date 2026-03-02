@@ -201,7 +201,7 @@ class WorkerAgent(BaseAgent):
             sdk_kwargs["mcp_servers"] = {"karavan": build_mcp_server("karavan_worker")}
             sdk_kwargs["allowed_tools"] = list({*sdk_kwargs["allowed_tools"], *MCP_TOOL_NAMES})
 
-        async for message in query(prompt=prompt, options=ClaudeAgentOptions(**sdk_kwargs)):
+        async for message in query(prompt=prompt, options=ClaudeAgentOptions.model_validate(sdk_kwargs)):
             tracker.record_activity(message)
             if hasattr(message, "total_cost_usd"):
                 execution_cost = message.total_cost_usd
@@ -265,14 +265,15 @@ class WorkerAgent(BaseAgent):
             await tracker.finish(success=False, error="No code changes produced")
             return False
 
-        pr = await create_pr(PRCreateIn(
-            owner=self.owner,
-            repo=self.repo_name,
-            title=f"[karavan] {card.name}",
-            body=f"Trello card: {card.url}\n\n{result_text[:1000] if result_text else 'Automated by Karavan agent.'}",
-            head=branch_name,
-            base=self.config.base_branch,
-        ))
+        pr_data = {
+            "owner": self.owner,
+            "repo": self.repo_name,
+            "title": f"[karavan] {card.name}",
+            "body": f"Trello card: {card.url}\n\n{result_text[:1000] if result_text else 'Automated by Karavan agent.'}",
+            "head": branch_name,
+            "base": self.config.base_branch,
+        }
+        pr = await create_pr(PRCreateIn.model_validate(pr_data))
 
         comment_parts = [f"PR opened: {pr.html_url}"]
         if cost is not None:

@@ -120,13 +120,13 @@ class Settings(BaseSettings):
                 boards_raw = data.get("boards", {})
                 parsed_boards: dict[str, BoardConfig] = {}
                 for board_name, board_cfg in boards_raw.items():
-                    parsed_boards[board_name] = BoardConfig(**board_cfg)
+                    parsed_boards[board_name] = BoardConfig.model_validate(board_cfg)
                 self.boards = parsed_boards
 
                 # Parse orchestrator
                 orch_raw = data.get("orchestrator")
                 if orch_raw:
-                    self.orchestrator = OrchestratorAgentConfig(**orch_raw)
+                    self.orchestrator = OrchestratorAgentConfig.model_validate(orch_raw)
 
                 total_workers = sum(len(b.workers) for b in parsed_boards.values())
                 logger.info("Loaded %d boards with %d workers from config.json", len(parsed_boards), total_workers)

@@ -46,4 +46,4 @@ async def create_pr(pr_in: PRCreateIn) -> PROut:
     )
     resp.raise_for_status()
     logger.info("Created PR #%s for %s/%s", resp.json()["number"], pr_in.owner, pr_in.repo)
-    return PROut(**resp.json())
+    return PROut.model_validate(resp.json())

@@ -60,18 +60,19 @@ class OrchestratorAgent(BaseAgent):
         mcp_server = build_mcp_server("karavan_orchestrator")
 
         # Create Claude SDK client with read access to repos + Trello tools
-        self._client = ClaudeSDKClient(options=ClaudeAgentOptions(
-            add_dirs=[str(d) for d in self._repo_dirs],
-            allowed_tools=["Read", "Glob", "Grep", *MCP_TOOL_NAMES],
-            mcp_servers={"karavan": mcp_server},
-            system_prompt={
+        sdk_data = {
+            "add_dirs": [str(d) for d in self._repo_dirs],
+            "allowed_tools": ["Read", "Glob", "Grep", *MCP_TOOL_NAMES],
+            "mcp_servers": {"karavan": mcp_server},
+            "system_prompt": {
                 "type": "preset",
                 "preset": "claude_code",
                 "append": self.config.system_prompt,
             },
-            permission_mode="bypassPermissions",
-            setting_sources=["project"],
-        ))
+            "permission_mode": "bypassPermissions",
+            "setting_sources": ["project"],
+        }
+        self._client = ClaudeSDKClient(options=ClaudeAgentOptions.model_validate(sdk_data))
         await self._client.__aenter__()
         logger.info("Orchestrator %s: Claude SDK client started with %d repos", self.name, len(self._repo_dirs))
 

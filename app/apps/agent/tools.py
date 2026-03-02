@@ -104,11 +104,12 @@ async def create_trello_card_tool(args: dict) -> dict:
         return _worker_not_found(worker_name)
 
     try:
-        card = await create_card(CardCreateIn(
-            name=args["name"],
-            desc=args["description"],
-            id_list=config.lists.todo,
-        ))
+        card_data = {
+            "name": args["name"],
+            "desc": args["description"],
+            "id_list": config.lists.todo,
+        }
+        card = await create_card(CardCreateIn.model_validate(card_data))
         return _text_result(json.dumps({
             "status": "created",
             "card_id": card.id,

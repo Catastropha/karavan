@@ -744,6 +744,40 @@ class CardPostIn(BaseModel):
 
 This applies to every single field in every single Pydantic model across the entire project, without exception.
 
+### Instantiation via `model_validate`
+
+**All Pydantic models MUST be instantiated by first building a plain dict, then calling `.model_validate()`.**  Never use direct constructor calls (`Model(field=value)`).
+
+```python
+# ✅ CORRECT — build dict, then validate
+data = {
+    "name": "Add reminder endpoint",
+    "desc": "## Task\nImplement the endpoint...",
+    "id_list": config.lists.todo,
+}
+card = CardCreateIn.model_validate(data)
+```
+
+```python
+# ✅ CORRECT — when data is already a dict (e.g. from JSON response)
+card = CardOut.model_validate(resp.json())
+```
+
+```python
+# ✅ CORRECT — empty models use direct constructor (no fields to validate)
+response = WebhookPostOut()
+```
+
+```python
+# ❌ WRONG — direct constructor call with fields
+card = CardCreateIn(name="Add reminder endpoint", desc="...", id_list="...")
+
+# ❌ WRONG — unpacking a dict into constructor
+card = CardOut(**resp.json())
+```
+
+This applies to every Pydantic model instantiation across the entire project, without exception.
+
 ---
 
 ## Additional Conventions
