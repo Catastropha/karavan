@@ -77,7 +77,7 @@ Workers are not hardcoded to one lifecycle. Three orthogonal config axes make be
 |------|---------------|------------|----------|
 | `write` | clone, pull, branch, commit, push | `cwd` = repo dir | Coder — writes code, opens PRs |
 | `read` | clone, pull (no branch/commit/push) | `add_dirs` = [repo dir] | Reviewer — reads code for context |
-| `none` | nothing | neither | Planner — pure reasoning, no repo |
+| `none` | nothing | neither | Critic — pure reasoning, no repo |
 
 **2. `output_mode`** — what does the agent produce when it finishes a card?
 
@@ -94,7 +94,7 @@ Workers are not hardcoded to one lifecycle. Three orthogonal config axes make be
 |---------|-------|----------|
 | Full coding | `["Read", "Write", "Edit", "Bash", "Glob", "Grep"]` | Default — code workers |
 | Read-only | `["Read", "Glob", "Grep"]` | Reviewers, analysts |
-| MCP-only | `["list_workers", "create_trello_card", ...]` | Planners, card creators |
+| MCP-only | `["list_workers", "create_trello_card", ...]` | Orchestrator, card creators |
 
 **Config validation rules:**
 - `repo_access: "write"` requires non-empty `repo` and `branch_prefix`
@@ -218,7 +218,36 @@ Worker config fields:
 | `output_mode` | no | `"pr"` | `"pr"`, `"comment"`, `"cards"`, or `"update"` |
 | `allowed_tools` | no | `["Read","Write","Edit","Bash","Glob","Grep"]` | SDK tools available to the agent |
 
-Example with different worker types:
+Simple example — one board, one coder:
+
+```json
+{
+  "boards": {
+    "myproject": {
+      "board_id": "trello_board_id",
+      "failed_list_id": "trello_list_id",
+      "workers": {
+        "api": {
+          "lists": { "todo": "...", "doing": "...", "done": "..." },
+          "repo": "git@github.com:user/myproject-api.git",
+          "branch_prefix": "agent/api",
+          "base_branch": "main",
+          "system_prompt": "You are a FastAPI backend developer."
+        }
+      }
+    }
+  },
+  "orchestrator": {
+    "repos": [
+      "git@github.com:user/myproject-api.git"
+    ],
+    "base_branch": "main",
+    "system_prompt": "You are an engineering lead. Break features into clear tasks for worker agents."
+  }
+}
+```
+
+Advanced example — multiple boards, mixed agent types:
 
 ```json
 {
@@ -245,23 +274,33 @@ Example with different worker types:
         }
       }
     },
-    "planning": {
+    "frontend": {
       "board_id": "trello_board_id",
       "failed_list_id": "trello_list_id",
       "workers": {
-        "planner": {
-          "repo_access": "none",
-          "output_mode": "cards",
-          "allowed_tools": ["list_workers", "create_trello_card", "get_card_status", "get_worker_cards"],
+        "static": {
           "lists": { "todo": "...", "doing": "...", "done": "..." },
-          "system_prompt": "You break down ideas into concrete, actionable tasks for worker agents."
+          "repo": "git@github.com:user/myproject-static.git",
+          "branch_prefix": "agent/static",
+          "base_branch": "main",
+          "system_prompt": "You are a frontend developer. Use the existing component library."
+        },
+        "critic": {
+          "repo_access": "read",
+          "output_mode": "comment",
+          "allowed_tools": ["Read", "Glob", "Grep"],
+          "lists": { "todo": "...", "doing": "...", "done": "..." },
+          "repo": "git@github.com:user/myproject-static.git",
+          "base_branch": "main",
+          "system_prompt": "You are a frontend architecture critic. Evaluate component design, accessibility, performance patterns, and consistency with the design system."
         }
       }
     }
   },
   "orchestrator": {
     "repos": [
-      "git@github.com:user/myproject-api.git"
+      "git@github.com:user/myproject-api.git",
+      "git@github.com:user/myproject-static.git"
     ],
     "base_branch": "main",
     "system_prompt": "You are an engineering lead. Break features into clear tasks for worker agents."
@@ -306,7 +345,7 @@ Example with different worker types:
 - Improved MarkdownV2 escaping (code blocks, inline code, links, bold)
 - Chat ID tracking from conversations for correct Telegram notifications in groups
 - Configurable agent behaviors via `repo_access`, `output_mode`, and `allowed_tools` config axes
-- Non-coding worker types: reviewers (read+comment), planners (none+cards), improvers (read+update)
+- Non-coding worker types: reviewers (read+comment), critics (read+comment), improvers (read+update)
 - Unified MCP server factory (`build_mcp_server(name)`) for both orchestrator and workers with `output_mode: "cards"`
 - `update_card(card_id, desc=...)` Trello CRUD for agents with `output_mode: "update"`
 - Worker `_execute_card()` decomposed into conditional stages (`_setup_repo`, `_build_prompt`, `_run_sdk`, `_deliver_output`)

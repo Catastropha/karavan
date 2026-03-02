@@ -44,23 +44,19 @@
           "branch_prefix": "agent/static",
           "base_branch": "main",
           "system_prompt": "You are a frontend developer. Use the existing component library."
-        }
-      }
-    },
-    "planning": {
-      "board_id": "trello_board_id",
-      "failed_list_id": "trello_list_id",
-      "workers": {
-        "planner": {
-          "repo_access": "none",
-          "output_mode": "cards",
-          "allowed_tools": ["list_workers", "create_trello_card", "get_card_status", "get_worker_cards"],
+        },
+        "critic": {
+          "repo_access": "read",
+          "output_mode": "comment",
+          "allowed_tools": ["Read", "Glob", "Grep"],
           "lists": {
             "todo": "trello_list_id",
             "doing": "trello_list_id",
             "done": "trello_list_id"
           },
-          "system_prompt": "You break down ideas into concrete, actionable tasks for worker agents."
+          "repo": "git@github.com:user/myproject-static.git",
+          "base_branch": "main",
+          "system_prompt": "You are a frontend architecture critic. Evaluate component design, accessibility, performance patterns, and consistency with the design system."
         }
       }
     }

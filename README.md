@@ -45,7 +45,7 @@ Workers aren't limited to writing code. Each worker's behavior is defined by thr
 |---------|-------|----------|
 | Full coding | `Read, Write, Edit, Bash, Glob, Grep` | Code workers (default) |
 | Read-only | `Read, Glob, Grep` | Reviewers, analysts |
-| MCP-only | `list_workers, create_trello_card, ...` | Planners, card creators |
+| MCP-only | `list_workers, create_trello_card, ...` | Orchestrator, card creators |
 
 These combine into different agent personas:
 
@@ -53,7 +53,7 @@ These combine into different agent personas:
 |-------|-------------|-------------|-------------|
 | Coder | `write` | `pr` | Writes code, opens PRs |
 | Reviewer | `read` | `comment` | Reads code, posts analysis |
-| Planner | `none` | `cards` | Breaks ideas into tasks for other agents |
+| Critic | `read` | `comment` | Evaluates architecture, design, and quality |
 | Improver | `read` | `update` | Refines vague card specs into detailed ones |
 
 All three fields have backward-compatible defaults (`write`, `pr`, full tool list) — existing configs work without changes.
@@ -133,107 +133,128 @@ GITHUB_TOKEN=ghp_...
 
 Edit `config.json` with your Trello list IDs, repos, and agent definitions. Here are two examples:
 
-#### Simple config — one coder, one orchestrator
+#### Simple config — one board, one coder
 
-The minimal setup: an orchestrator that talks to you via Telegram and one worker that writes code.
+The minimal setup: one Trello board with a single code worker and an orchestrator that talks to you via Telegram.
 
 ```json
 {
-  "agents": {
-    "api": {
-      "type": "worker",
-      "lists": {
-        "todo": "6830abc123def456abc12301",
-        "doing": "6830abc123def456abc12302",
-        "done": "6830abc123def456abc12303"
-      },
-      "repo": "git@github.com:you/your-api.git",
-      "branch_prefix": "agent/api",
-      "base_branch": "main",
-      "system_prompt": "You are a FastAPI backend developer. Follow existing patterns in the codebase."
-    },
-    "orchestrator": {
-      "type": "orchestrator",
+  "boards": {
+    "myproject": {
       "board_id": "6830abc123def456abc12300",
       "failed_list_id": "6830abc123def456abc12304",
-      "repos": [
-        "git@github.com:you/your-api.git"
-      ],
-      "base_branch": "main",
-      "system_prompt": "You are an engineering lead. Break features into clear tasks for worker agents."
+      "workers": {
+        "api": {
+          "lists": {
+            "todo": "6830abc123def456abc12301",
+            "doing": "6830abc123def456abc12302",
+            "done": "6830abc123def456abc12303"
+          },
+          "repo": "git@github.com:you/your-api.git",
+          "branch_prefix": "agent/api",
+          "base_branch": "main",
+          "system_prompt": "You are a FastAPI backend developer. Follow existing patterns in the codebase."
+        }
+      }
     }
+  },
+  "orchestrator": {
+    "repos": [
+      "git@github.com:you/your-api.git"
+    ],
+    "base_branch": "main",
+    "system_prompt": "You are an engineering lead. Break features into clear tasks for worker agents."
   }
 }
 ```
 
-This is the "classic" Karavan setup. The worker uses the defaults (`repo_access: "write"`, `output_mode: "pr"`, full tool list), so you don't need to specify them. You send a message in Telegram, the orchestrator creates a card, the worker writes code and opens a PR.
+Workers are grouped under `boards`. Each board maps to a Trello board and has its own `board_id`, `failed_list_id`, and `workers`. The orchestrator sits at the top level and works across all boards. The worker uses the defaults (`repo_access: "write"`, `output_mode: "pr"`, full tool list), so you don't need to specify them.
 
-#### Advanced config — mixed worker types
+#### Advanced config — multiple boards, mixed agent types
 
-A richer setup with specialized agents: a coder, a reviewer, and a planner.
+A richer setup across multiple Trello boards with specialized agents: coders, a reviewer, and a critic.
 
 ```json
 {
-  "agents": {
-    "api": {
-      "type": "worker",
-      "lists": {
-        "todo": "6830abc123def456abc12301",
-        "doing": "6830abc123def456abc12302",
-        "done": "6830abc123def456abc12303"
-      },
-      "repo": "git@github.com:you/your-api.git",
-      "branch_prefix": "agent/api",
-      "base_branch": "main",
-      "system_prompt": "You are a FastAPI backend developer. Follow existing patterns in the codebase."
-    },
-    "reviewer": {
-      "type": "worker",
-      "repo_access": "read",
-      "output_mode": "comment",
-      "allowed_tools": ["Read", "Glob", "Grep"],
-      "lists": {
-        "todo": "6830abc123def456abc12304",
-        "doing": "6830abc123def456abc12305",
-        "done": "6830abc123def456abc12306"
-      },
-      "repo": "git@github.com:you/your-api.git",
-      "base_branch": "main",
-      "system_prompt": "You are a senior code reviewer. Read the codebase, analyze the task, and provide detailed feedback as your response. Focus on correctness, edge cases, and adherence to existing patterns."
-    },
-    "planner": {
-      "type": "worker",
-      "repo_access": "none",
-      "output_mode": "cards",
-      "allowed_tools": ["list_workers", "create_trello_card", "get_card_status", "get_worker_cards"],
-      "lists": {
-        "todo": "6830abc123def456abc12307",
-        "doing": "6830abc123def456abc12308",
-        "done": "6830abc123def456abc12309"
-      },
-      "system_prompt": "You are a technical planner. Break down high-level ideas into concrete, actionable tasks. Use list_workers to find available agents, then create_trello_card to assign work. Follow the card schema format with ## Task, ## Context, and ## Acceptance Criteria sections."
-    },
-    "orchestrator": {
-      "type": "orchestrator",
+  "boards": {
+    "backend": {
       "board_id": "6830abc123def456abc12300",
       "failed_list_id": "6830abc123def456abc12310",
-      "repos": [
-        "git@github.com:you/your-api.git"
-      ],
-      "base_branch": "main",
-      "system_prompt": "You are an engineering lead. You have three workers: 'api' writes code and opens PRs, 'reviewer' analyzes code and posts feedback as comments, and 'planner' breaks ideas into sub-tasks. Route work to the right agent."
+      "workers": {
+        "api": {
+          "lists": {
+            "todo": "6830abc123def456abc12301",
+            "doing": "6830abc123def456abc12302",
+            "done": "6830abc123def456abc12303"
+          },
+          "repo": "git@github.com:you/your-api.git",
+          "branch_prefix": "agent/api",
+          "base_branch": "main",
+          "system_prompt": "You are a FastAPI backend developer. Follow existing patterns in the codebase."
+        },
+        "reviewer": {
+          "repo_access": "read",
+          "output_mode": "comment",
+          "allowed_tools": ["Read", "Glob", "Grep"],
+          "lists": {
+            "todo": "6830abc123def456abc12304",
+            "doing": "6830abc123def456abc12305",
+            "done": "6830abc123def456abc12306"
+          },
+          "repo": "git@github.com:you/your-api.git",
+          "base_branch": "main",
+          "system_prompt": "You are a senior code reviewer. Read the codebase, analyze the task, and provide detailed feedback as your response. Focus on correctness, edge cases, and adherence to existing patterns."
+        }
+      }
+    },
+    "frontend": {
+      "board_id": "6830abc123def456abc12311",
+      "failed_list_id": "6830abc123def456abc12318",
+      "workers": {
+        "static": {
+          "lists": {
+            "todo": "6830abc123def456abc12312",
+            "doing": "6830abc123def456abc12313",
+            "done": "6830abc123def456abc12314"
+          },
+          "repo": "git@github.com:you/your-frontend.git",
+          "branch_prefix": "agent/static",
+          "base_branch": "main",
+          "system_prompt": "You are a frontend developer. Use the existing component library."
+        },
+        "critic": {
+          "repo_access": "read",
+          "output_mode": "comment",
+          "allowed_tools": ["Read", "Glob", "Grep"],
+          "lists": {
+            "todo": "6830abc123def456abc12315",
+            "doing": "6830abc123def456abc12316",
+            "done": "6830abc123def456abc12317"
+          },
+          "repo": "git@github.com:you/your-frontend.git",
+          "base_branch": "main",
+          "system_prompt": "You are a frontend architecture critic. Evaluate component design, accessibility, performance patterns, and consistency with the design system."
+        }
+      }
     }
+  },
+  "orchestrator": {
+    "repos": [
+      "git@github.com:you/your-api.git",
+      "git@github.com:you/your-frontend.git"
+    ],
+    "base_branch": "main",
+    "system_prompt": "You are an engineering lead. You have workers across two boards: 'api' writes backend code, 'reviewer' analyzes backend code and posts feedback, 'static' writes frontend code, and 'critic' evaluates frontend architecture. Route work to the right agent."
   }
 }
 ```
 
 In this setup:
-- **api** — the coder. Clones the repo, writes code, opens PRs. Uses the default config axes.
-- **reviewer** — read-only access to the repo. Reads code and posts its analysis as a Trello card comment. Cannot modify files.
-- **planner** — no repo at all. Uses MCP tools to discover workers and create Trello cards for them. Pure reasoning agent.
-- **orchestrator** — routes work to the right agent based on the task.
+- **backend** board — has a **coder** (`api`) that writes code and opens PRs, and a **reviewer** that reads code and posts analysis as Trello comments
+- **frontend** board — has a **coder** (`static`) working on a separate repo, and a **critic** that evaluates architecture and design patterns
+- **orchestrator** — works across all boards, has read access to all repos, creates cards and routes tasks to the right agent
 
-The orchestrator can chain them: send a vague idea to the planner, the planner creates detailed cards for the coder, and after the coder finishes, the orchestrator sends a review card to the reviewer.
+The orchestrator can chain them: assign a feature to the coder, and after the coder finishes, send a review card to the reviewer or a critique card to the critic. Worker names must be unique across all boards.
 
 ### 7. Set Up HTTPS
 
