@@ -27,6 +27,15 @@ async def add_comment(card_id: str, text: str) -> dict:
     return resp.json()
 
 
+async def update_card_description(card_id: str, description: str) -> CardOut:
+    """Replace the description of a Trello card."""
+    params = {**auth_params(), "desc": description}
+    resp = await res.trello_client.put(f"cards/{card_id}", params=params)
+    resp.raise_for_status()
+    logger.info("Updated description for card %s", card_id)
+    return CardOut(**resp.json())
+
+
 async def add_label(card_id: str, label_id: str) -> None:
     """Add a label to a Trello card."""
     params = {**auth_params(), "value": label_id}

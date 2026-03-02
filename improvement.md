@@ -6,26 +6,19 @@
 
 Implemented `/clear` Telegram command that resets the orchestrator's conversation context by switching to a new `session_id` (SDK supports per-session conversation isolation). The command flows through the existing queue so it's processed in order — no race conditions with in-flight queries.
 
-## 2. Agent roles beyond "worker"
+## 2. Configurable agent behaviors (not just coders)
 
-**Status:** Open
+**Status:** Done
 
-Introduce distinct agent roles that go beyond just coding. Different roles would have different system prompts, tool access, and behaviors in the card lifecycle.
+Implemented three orthogonal config axes on `WorkerAgentConfig` — `repo_access` (`write`/`read`/`none`), `output_mode` (`pr`/`comment`/`cards`/`update`), and `allowed_tools` — so agent behavior is composable through configuration. Existing configs work unchanged (defaults match prior hardcoded behavior).
 
-**Potential roles:**
-- **Coder** — current worker behavior, writes code and opens PRs
-- **Critic** — reviews PRs or code on cards, leaves comments with feedback, can request changes or approve
-- **Doubter** — challenges assumptions in card descriptions, flags risks, edge cases, and missing requirements before work begins
-- **Tester** — writes and runs tests against a coder's branch, reports results on the card
-- **Reviewer** — performs code review on open PRs, comments on GitHub, can block merge
-
-**Considerations:**
-- Add a `role` field to agent config (e.g. `"role": "coder"`, `"role": "critic"`)
-- Each role defines: default system prompt, allowed tools, which lists it watches, what it outputs (code, comments, approvals)
-- Roles could chain in a pipeline: coder → critic → reviewer → done
-- Orchestrator needs awareness of roles to assign cards appropriately
-- Non-coding roles don't need git push/PR access — just read access and comment ability
-- Could model as additional Trello lists per pipeline stage (e.g. `review`, `testing`)
+Key changes:
+- `repo` and `branch_prefix` are now optional (only required when `repo_access == "write"`)
+- Model validator enforces cross-field constraints (e.g. `output_mode: "pr"` requires `repo_access: "write"`)
+- `WorkerAgent._execute_card()` decomposed into four stage methods (`_setup_repo`, `_build_prompt`, `_run_sdk`, `_deliver_output`) that dispatch on config
+- Workers with `output_mode: "cards"` get MCP tools (`create_trello_card`, `list_workers`, etc.) via `build_worker_mcp_server()`
+- Added `update_card_description()` Trello CRUD for the `update` output mode
+- Orchestrator failure message generalized (no longer assumes code-only agents)
 
 ## 3. Per-agent LLM model assignment (LLM agnostic)
 

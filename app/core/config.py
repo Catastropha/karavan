@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -29,10 +29,34 @@ class WorkerAgentConfig(BaseModel):
 
     type: Annotated[Literal["worker"], Field(description="Agent type")]
     lists: Annotated[WorkerListsConfig, Field(description="Trello list IDs")]
-    repo: Annotated[str, Field(min_length=1, description="Git repo SSH URL")]
-    branch_prefix: Annotated[str, Field(min_length=1, description="Branch prefix for this agent")]
+    repo: Annotated[str, Field(default="", description="Git repo SSH URL (required when repo_access is 'write')")]
+    branch_prefix: Annotated[str, Field(default="", description="Branch prefix (required when repo_access is 'write')")]
     base_branch: Annotated[str, Field(default="main", description="Base branch to pull and target PRs against")]
     system_prompt: Annotated[str, Field(default="", description="System prompt for Claude")]
+    repo_access: Annotated[
+        Literal["write", "read", "none"],
+        Field(default="write", description="Repo access level: write (clone+branch+commit), read (clone for context), none (no repo)"),
+    ]
+    output_mode: Annotated[
+        Literal["pr", "comment", "cards", "update"],
+        Field(default="pr", description="Output mode: pr (code+PR), comment (analysis as card comment), cards (create sub-cards via MCP), update (rewrite card description)"),
+    ]
+    allowed_tools: Annotated[
+        list[str],
+        Field(default_factory=lambda: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"], description="Tools available to the Claude SDK agent"),
+    ]
+
+    @model_validator(mode="after")
+    def _validate_config_axes(self) -> "WorkerAgentConfig":
+        """Enforce cross-field constraints between repo_access, output_mode, repo, and branch_prefix."""
+        if self.repo_access == "write":
+            if not self.repo:
+                raise ValueError("repo is required when repo_access is 'write'")
+            if not self.branch_prefix:
+                raise ValueError("branch_prefix is required when repo_access is 'write'")
+        if self.output_mode == "pr" and self.repo_access != "write":
+            raise ValueError("output_mode 'pr' requires repo_access 'write'")
+        return self
 
 
 class OrchestratorAgentConfig(BaseModel):

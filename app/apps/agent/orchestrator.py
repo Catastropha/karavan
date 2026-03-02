@@ -281,7 +281,7 @@ class OrchestratorAgent(BaseAgent):
         chat_ids = self._known_chat_ids or set(settings.telegram_allowed_user_ids)
         for chat_id in chat_ids:
             try:
-                text = escape_markdown_v2(f"Card failed: {card_name} — agent produced no code changes.")
+                text = escape_markdown_v2(f"Card failed: {card_name} — check card comments for details.")
                 await send_message(chat_id, text)
             except Exception:
                 logger.exception("Failed to notify chat %d about failed card", chat_id)

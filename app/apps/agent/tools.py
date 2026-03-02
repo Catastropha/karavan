@@ -59,7 +59,9 @@ async def list_workers_tool(args: dict) -> dict:
     workers = [
         {
             "name": name,
-            "repo": config.repo,
+            "repo": config.repo or "(none)",
+            "repo_access": config.repo_access,
+            "output_mode": config.output_mode,
             "lists": {"todo": config.lists.todo, "doing": config.lists.doing, "done": config.lists.done},
             "system_prompt_preview": config.system_prompt[:100] if config.system_prompt else "",
         }
@@ -185,6 +187,15 @@ def build_orchestrator_mcp_server():
     """Create the MCP server with all orchestrator tools."""
     return create_sdk_mcp_server(
         name="karavan_orchestrator",
+        version="0.1.0",
+        tools=[list_workers_tool, create_trello_card_tool, get_card_status_tool, get_worker_cards_tool],
+    )
+
+
+def build_worker_mcp_server():
+    """Create MCP server for workers that create Trello cards (output_mode: 'cards')."""
+    return create_sdk_mcp_server(
+        name="karavan_worker",
         version="0.1.0",
         tools=[list_workers_tool, create_trello_card_tool, get_card_status_tool, get_worker_cards_tool],
     )
