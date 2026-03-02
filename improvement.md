@@ -63,7 +63,7 @@ Weaknesses and improvements identified from a full codebase analysis. Work throu
 - **Fix:** Maintain an in-progress set of card IDs per agent. Skip processing if the card is already being worked on. Clear on completion or failure.
 
 ### 9. Orchestrator done-event handling is minimal
-- **Status:** TODO
+- **Status:** DONE
 - **File(s):** `app/apps/agent/orchestrator.py:133-145`
 - **Problem:** Done notification is just "Card completed: {name}". Doesn't include the PR link, doesn't summarize what was done, doesn't check if all cards for a feature are complete, doesn't trigger dependent cards.
 - **Fix:** Fetch the card's comments to find the PR link. Include it in the Telegram notification. Implement basic dependency checking — when a card completes, check if any blocked cards can now be unblocked.

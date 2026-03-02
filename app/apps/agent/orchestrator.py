@@ -1,6 +1,7 @@
 """OrchestratorAgent — manages planning via Telegram, creates Trello cards, monitors done lists."""
 
 import logging
+import re
 from pathlib import Path
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
@@ -11,6 +12,7 @@ from app.apps.bot.crud.create import send_message, send_typing_action
 from app.apps.bot.markdown import escape_markdown_v2
 from app.apps.git_manager.crud.create import clone_repo
 from app.apps.git_manager.crud.update import pull_base
+from app.apps.trello.crud.read import get_card, get_card_actions, get_list_cards
 from app.common.model.input import BotMessage
 from app.core.config import BASE_DIR, OrchestratorAgentConfig, settings
 
@@ -142,17 +144,109 @@ class OrchestratorAgent(BaseAgent):
             except Exception:
                 logger.exception("Failed to send error message to Telegram")
 
+    async def _extract_pr_link(self, card_id: str) -> str | None:
+        """Fetch card comments and extract the PR link if present."""
+        try:
+            actions = await get_card_actions(card_id)
+            for action in actions:
+                text = action.get("data", {}).get("text", "")
+                if text.startswith("PR opened: "):
+                    return text.removeprefix("PR opened: ").strip()
+        except Exception:
+            logger.warning("Failed to fetch comments for card %s", card_id)
+        return None
+
+    @staticmethod
+    def _parse_dependencies(description: str) -> list[str]:
+        """Extract dependency card IDs from a card description's ## Dependencies section."""
+        in_deps = False
+        card_ids: list[str] = []
+        for line in description.splitlines():
+            stripped = line.strip()
+            if stripped.lower().startswith("## dependencies"):
+                in_deps = True
+                continue
+            if in_deps and stripped.startswith("## "):
+                break
+            if in_deps and stripped:
+                # Match Trello card IDs (24-char hex) in "Requires: card_id ..." lines
+                matches = re.findall(r"\b([0-9a-f]{24})\b", stripped)
+                card_ids.extend(matches)
+        return card_ids
+
+    async def _find_unblocked_cards(self, completed_card_id: str) -> list[dict]:
+        """Scan all workers' todo lists for cards whose dependencies are now fully satisfied."""
+        unblocked: list[dict] = []
+
+        for worker_name, config in settings.worker_agents.items():
+            try:
+                cards = await get_list_cards(config.lists.todo)
+            except Exception:
+                logger.warning("Failed to fetch todo list for worker %s", worker_name)
+                continue
+
+            for card in cards:
+                deps = self._parse_dependencies(card.desc)
+                if completed_card_id not in deps:
+                    continue
+
+                # Check if ALL dependencies are now in done lists
+                all_satisfied = True
+                for dep_id in deps:
+                    try:
+                        dep_card = await get_card(dep_id)
+                        if dep_card.id_list not in settings.done_list_ids:
+                            all_satisfied = False
+                            break
+                    except Exception:
+                        all_satisfied = False
+                        break
+
+                if all_satisfied:
+                    unblocked.append({
+                        "card_id": card.id,
+                        "card_name": card.name,
+                        "worker": worker_name,
+                    })
+
+        return unblocked
+
     async def _handle_done_event(self, event: dict) -> None:
-        """Handle a card-moved-to-done webhook event — notify user via Telegram."""
+        """Handle a card-moved-to-done webhook event.
+
+        Fetches the PR link from card comments, checks for newly unblocked
+        dependent cards, and sends a rich notification via Telegram.
+        """
         card_name = event.get("card_name", "Unknown card")
         card_id = event.get("card_id", "")
         logger.info("Orchestrator %s: card '%s' (%s) moved to done", self.name, card_name, card_id)
 
-        # Notify all allowed users (single-user system, but iterate for safety)
+        # Fetch PR link from card comments
+        pr_link = await self._extract_pr_link(card_id) if card_id else None
+
+        # Build notification message
+        parts = [f"Card completed: {card_name}"]
+        if pr_link:
+            parts.append(f"PR: {pr_link}")
+
+        # Check for newly unblocked dependent cards
+        unblocked: list[dict] = []
+        if card_id:
+            try:
+                unblocked = await self._find_unblocked_cards(card_id)
+            except Exception:
+                logger.exception("Failed to check for unblocked cards after %s", card_id)
+
+        if unblocked:
+            names = ", ".join(c["card_name"] for c in unblocked)
+            parts.append(f"Unblocked: {names}")
+
+        message = "\n".join(parts)
+
+        # Notify all allowed users
         for user_id in settings.telegram_allowed_user_ids:
             try:
-                text = escape_markdown_v2(f"Card completed: {card_name}")
-                await send_message(user_id, text)
+                await send_message(user_id, escape_markdown_v2(message))
             except Exception:
                 logger.exception("Failed to notify user %d about completed card", user_id)
 
