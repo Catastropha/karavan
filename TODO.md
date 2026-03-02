@@ -56,13 +56,13 @@ The method handles `pr`, `comment`, `cards`, `update` via elif chains but has no
 
 ## 7. Commit untracked test files
 
-**Status:** Open
+**Status:** Done
 
 `tests/hook/` is untracked in git. These tests should be committed.
 
 ## 8. Add `.idea/` to `.gitignore`
 
-**Status:** Open
+**Status:** Done
 
 JetBrains IDE config directory is showing as untracked. Should be gitignored.
 
