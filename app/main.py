@@ -11,6 +11,8 @@ from app.apps.bot.crud.create import register_telegram_webhook
 from app.apps.bot.route import router as bot_router, set_orchestrator_queue
 from app.apps.hook.route import router as hook_router, set_agent_registry
 from app.apps.trello.crud.create import register_webhook
+from app.apps.trello.crud.delete import delete_webhook
+from app.apps.trello.crud.read import get_token_webhooks
 from app.core.config import settings
 from app.core.middleware import setup_middleware
 from app.core.resource import res
@@ -47,29 +49,56 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     await registry.start_all()
 
-    # 3. Register Trello webhooks
+    # 3. Register Trello webhooks (deduplicate — clean stale, skip existing)
     webhook_base = settings.webhook_base_url
-    for name, worker in registry.workers.items():
-        try:
-            callback_url = f"{webhook_base}/webhook/{name}"
-            await register_webhook(
-                model_id=worker.config.lists.todo,
-                callback_url=callback_url,
-                description=f"karavan-worker-{name}",
-            )
-        except Exception:
-            logger.exception("Failed to register Trello webhook for worker %s", name)
 
+    # Build desired webhook specs: {(model_id, callback_url): description}
+    desired: dict[tuple[str, str], str] = {}
+    for name, worker in registry.workers.items():
+        callback_url = f"{webhook_base}/webhook/{name}"
+        desired[(worker.config.lists.todo, callback_url)] = f"karavan-worker-{name}"
     if orchestrator:
+        callback_url = f"{webhook_base}/webhook/{orchestrator.name}"
+        desired[(orchestrator.config.board_id, callback_url)] = (
+            f"karavan-orchestrator-{orchestrator.name}"
+        )
+
+    # Fetch existing webhooks and reconcile
+    try:
+        existing = await get_token_webhooks()
+    except Exception:
+        logger.exception("Failed to list existing Trello webhooks, registering fresh")
+        existing = []
+
+    # Track which desired webhooks already exist
+    already_registered: set[tuple[str, str]] = set()
+    for wh in existing:
+        key = (wh.id_model, wh.callback_url)
+        if key in desired:
+            # Exact match exists — keep it
+            already_registered.add(key)
+        elif wh.description.startswith("karavan-"):
+            # Stale karavan webhook (old URL or removed agent) — delete it
+            try:
+                await delete_webhook(wh.id)
+                logger.info("Deleted stale webhook %s (%s)", wh.id, wh.description)
+            except Exception:
+                logger.warning("Failed to delete stale webhook %s", wh.id)
+
+    # Register missing webhooks
+    for key, description in desired.items():
+        if key in already_registered:
+            logger.info("Webhook already exists for %s, skipping", description)
+            continue
+        model_id, callback_url = key
         try:
-            callback_url = f"{webhook_base}/webhook/{orchestrator.name}"
             await register_webhook(
-                model_id=orchestrator.config.board_id,
+                model_id=model_id,
                 callback_url=callback_url,
-                description=f"karavan-orchestrator-{orchestrator.name}",
+                description=description,
             )
         except Exception:
-            logger.exception("Failed to register Trello webhook for orchestrator")
+            logger.exception("Failed to register Trello webhook: %s", description)
 
     # 4. Register Telegram webhook
     try:

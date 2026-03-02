@@ -3,7 +3,7 @@
 import logging
 
 from app.apps.trello.crud import auth_params
-from app.apps.trello.model.output import CardOut, ListOut
+from app.apps.trello.model.output import CardOut, ListOut, WebhookOut
 from app.core.resource import res
 
 logger = logging.getLogger(__name__)
@@ -36,3 +36,12 @@ async def get_board_lists(board_id: str) -> list[ListOut]:
     resp = await res.trello_client.get(f"boards/{board_id}/lists", params=auth_params())
     resp.raise_for_status()
     return [ListOut(**lst) for lst in resp.json()]
+
+
+async def get_token_webhooks() -> list[WebhookOut]:
+    """Fetch all webhooks registered for the current Trello token."""
+    resp = await res.trello_client.get(
+        f"tokens/{auth_params()['token']}/webhooks", params=auth_params()
+    )
+    resp.raise_for_status()
+    return [WebhookOut(**w) for w in resp.json()]

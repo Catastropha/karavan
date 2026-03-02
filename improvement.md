@@ -41,7 +41,7 @@ Weaknesses and improvements identified from a full codebase analysis. Work throu
 - **Fix:** Add a `base_branch` field to `WorkerAgentConfig` (defaulting to `main`). Pass it through to `pull_dev()` and PR creation.
 
 ### 6. Duplicate webhook accumulation on restart
-- **Status:** TODO
+- **Status:** DONE
 - **File(s):** `app/main.py:51-72`, `app/apps/trello/crud/create.py`
 - **Problem:** Every startup calls `register_webhook()` without checking for existing ones. Trello doesn't deduplicate. After a few restarts, the same event fires N webhooks, causing duplicate card processing.
 - **Fix:** On startup, list existing webhooks via the Trello API. Delete stale ones or skip registration if an identical webhook already exists.
