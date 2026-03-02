@@ -4,6 +4,7 @@ import asyncio
 import logging
 import re
 import time
+from collections import deque
 from typing import Any
 
 from claude_agent_sdk.types import AssistantMessage, TextBlock, ToolUseBlock
@@ -79,7 +80,7 @@ class ProgressTracker:
         self._worker_name = worker_name
         self._card_name = card_name
         self._messages: dict[int, int] = {}  # chat_id -> message_id
-        self._activities: list[str] = []
+        self._activities: deque[str] = deque(maxlen=MAX_ACTIVITIES)
         self._dirty = False
         self._last_edit_at: float = 0.0
         self._started_at: float = 0.0
@@ -185,10 +186,9 @@ class ProgressTracker:
             f"Elapsed: {_escape_md(elapsed)}",
         ]
 
-        recent = self._activities[-MAX_ACTIVITIES:]
-        if recent:
+        if self._activities:
             lines.append("")
-            for activity in recent:
+            for activity in self._activities:
                 lines.append(f"\\- {_escape_md(activity)}")
 
         return "\n".join(lines)

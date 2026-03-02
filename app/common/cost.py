@@ -2,7 +2,8 @@
 
 import logging
 import time
-from dataclasses import dataclass, field
+from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ class CostTracker:
     """
 
     def __init__(self) -> None:
-        self._agents: dict[str, AgentCostSummary] = {}
+        self._agents: defaultdict[str, AgentCostSummary] = defaultdict(AgentCostSummary)
 
     def record(
         self,
@@ -37,9 +38,6 @@ class CostTracker:
         card_id: str = "",
     ) -> None:
         """Record cost from a single SDK execution."""
-        if agent_name not in self._agents:
-            self._agents[agent_name] = AgentCostSummary()
-
         summary = self._agents[agent_name]
         summary.executions += 1
         summary.last_execution_at = time.time()
@@ -77,15 +75,17 @@ class CostTracker:
 
     def get_totals(self) -> dict[str, Any]:
         """Return aggregate totals across all agents."""
-        total_cost = sum(s.total_cost_usd for s in self._agents.values())
-        total_input = sum(s.total_input_tokens for s in self._agents.values())
-        total_output = sum(s.total_output_tokens for s in self._agents.values())
-        total_executions = sum(s.executions for s in self._agents.values())
+        cost = inp = out = execs = 0
+        for s in self._agents.values():
+            cost += s.total_cost_usd
+            inp += s.total_input_tokens
+            out += s.total_output_tokens
+            execs += s.executions
         return {
-            "total_cost_usd": round(total_cost, 4),
-            "total_input_tokens": total_input,
-            "total_output_tokens": total_output,
-            "total_executions": total_executions,
+            "total_cost_usd": round(cost, 4),
+            "total_input_tokens": inp,
+            "total_output_tokens": out,
+            "total_executions": execs,
         }
 
 
