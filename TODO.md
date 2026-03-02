@@ -24,7 +24,7 @@ The documentation has drifted from the code in three areas:
 
 ## 3. Add exhaustive guard in `_deliver_output`
 
-**Status:** Open
+**Status:** Done
 
 The method handles `pr`, `comment`, `cards`, `update` via elif chains but has no final `else`. If `output_mode` were somehow invalid, it would silently return `None`. Add a trailing `raise ValueError(f"Unknown output_mode: {mode}")`.
 
@@ -32,7 +32,7 @@ The method handles `pr`, `comment`, `cards`, `update` via elif chains but has no
 
 ## 4. Remove unnecessary f-string prefix
 
-**Status:** Open
+**Status:** Done
 
 `f"Card creation completed."` has no interpolation. Should be a plain string literal.
 
@@ -40,7 +40,7 @@ The method handles `pr`, `comment`, `cards`, `update` via elif chains but has no
 
 ## 5. Type the module-level globals in route modules
 
-**Status:** Open
+**Status:** Done
 
 `_agent_registry` and `_orchestrator_queue` are untyped module globals set via setter functions. They should have proper type annotations (e.g., `_agent_registry: AgentRegistry | None = None`) so the type checker can catch misuse.
 

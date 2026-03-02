@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, Request, Response
 from pydantic import ValidationError
 
+from app.apps.agent.registry import AgentRegistry
 from app.apps.hook.model.output import HealthGetOut, WebhookPostOut
 from app.apps.trello.model.input import TrelloWebhookPayload
 from app.common.cost import cost_tracker
@@ -16,13 +17,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["hook"])
 
 # Agent registry reference — set during app startup
-_agent_registry = None
+_agent_registry: AgentRegistry | None = None
 
 # Reusable OK response (every webhook return is identical)
 _OK = WebhookPostOut()
 
 
-def set_agent_registry(registry: object) -> None:
+def set_agent_registry(registry: AgentRegistry) -> None:
     """Set the agent registry for routing webhook events."""
     global _agent_registry
     _agent_registry = registry

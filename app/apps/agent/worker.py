@@ -231,7 +231,7 @@ class WorkerAgent(BaseAgent):
             await add_comment(card_id, "\n".join(comment_parts))
             return True
         elif mode == "cards":
-            summary = f"Card creation completed."
+            summary = "Card creation completed."
             if result_text:
                 summary = result_text[:500]
             if cost is not None:
@@ -244,6 +244,8 @@ class WorkerAgent(BaseAgent):
             if cost is not None:
                 await add_comment(card_id, f"Description updated. Cost: ${cost:.4f}")
             return True
+        else:
+            raise ValueError(f"Unknown output_mode: {mode}")
 
     async def _deliver_pr(
         self,

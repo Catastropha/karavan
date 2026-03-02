@@ -1,5 +1,6 @@
 """Telegram bot webhook route."""
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Request
@@ -15,10 +16,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["bot"])
 
 # Reference to orchestrator agent's queue — set during app startup
-_orchestrator_queue = None
+_orchestrator_queue: asyncio.Queue[BotMessage] | None = None
 
 
-def set_orchestrator_queue(queue: object) -> None:
+def set_orchestrator_queue(queue: asyncio.Queue[BotMessage]) -> None:
     """Set the orchestrator agent's asyncio.Queue for message routing."""
     global _orchestrator_queue
     _orchestrator_queue = queue
