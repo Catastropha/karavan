@@ -15,7 +15,7 @@ from app.apps.trello.crud.read import get_card, get_card_actions
 from app.apps.trello.crud.update import add_comment, move_card, update_card_description
 from app.common.cost import cost_tracker
 from app.common.progress import ProgressTracker
-from app.core.config import BASE_DIR, WorkerAgentConfig, settings
+from app.core.config import BASE_DIR, BoardConfig, WorkerAgentConfig
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +40,10 @@ class WorkerAgent(BaseAgent):
     - allowed_tools: which SDK tools are available to the agent
     """
 
-    def __init__(self, name: str, config: WorkerAgentConfig) -> None:
+    def __init__(self, name: str, config: WorkerAgentConfig, board: BoardConfig) -> None:
         super().__init__(name)
         self.config = config
+        self.board = board
         self.repo_dir = BASE_DIR / "repos" / name
         self._processed_cards: set[str] = set()
 
@@ -277,7 +278,7 @@ class WorkerAgent(BaseAgent):
         if not has_changes:
             logger.warning("Worker %s: agent produced no changes for card '%s'", self.name, card.name)
             await add_comment(card_id, f"{FAIL_PREFIX} Agent completed but produced no code changes.")
-            await move_card(card_id, settings.failed_list_id)
+            await move_card(card_id, self.board.failed_list_id)
             await tracker.finish(success=False, error="No code changes produced")
             return False
 
@@ -357,7 +358,7 @@ class WorkerAgent(BaseAgent):
                         f"{FAIL_PREFIX} {attempt_msg} (max retries reached). "
                         f"Agent {self.name} cannot process this card. Check server logs.",
                     )
-                    await move_card(card_id, settings.failed_list_id)
+                    await move_card(card_id, self.board.failed_list_id)
                     logger.warning("Worker %s: card '%s' moved to Failed after %d attempts", self.name, card.name, failure_count)
                 else:
                     await add_comment(

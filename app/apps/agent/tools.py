@@ -12,7 +12,7 @@ from claude_agent_sdk import create_sdk_mcp_server, tool
 from app.apps.trello.crud.create import create_card
 from app.apps.trello.crud.read import get_card, get_list_cards
 from app.apps.trello.model.input import CardCreateIn
-from app.core.config import WorkerAgentConfig, settings
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -25,21 +25,20 @@ def _text_result(text: str, is_error: bool = False) -> dict:
     return result
 
 
-def _get_worker(name: str) -> WorkerAgentConfig | None:
+def _get_worker(name: str):
     """Look up a worker config by name."""
-    config = settings.agents.get(name)
-    return config if isinstance(config, WorkerAgentConfig) else None
+    return settings.all_workers.get(name)
 
 
 def _worker_not_found(name: str) -> dict:
     """Build an error result for an unknown worker name."""
-    available = list(settings.worker_agents.keys())
+    available = list(settings.all_workers.keys())
     return _text_result(f"Worker '{name}' not found. Available: {available}", is_error=True)
 
 
 def _resolve_list_id(list_id: str) -> tuple[str, str] | None:
     """Resolve a Trello list ID to (worker_name, list_type) or None."""
-    for name, config in settings.worker_agents.items():
+    for name, config in settings.all_workers.items():
         for list_type in ("todo", "doing", "done"):
             if getattr(config.lists, list_type) == list_id:
                 return name, list_type
@@ -55,18 +54,19 @@ def _resolve_list_id(list_id: str) -> tuple[str, str] | None:
     {},
 )
 async def list_workers_tool(args: dict) -> dict:
-    """Return all worker agents with their list IDs."""
-    workers = [
-        {
-            "name": name,
-            "repo": config.repo or "(none)",
-            "repo_access": config.repo_access,
-            "output_mode": config.output_mode,
-            "lists": {"todo": config.lists.todo, "doing": config.lists.doing, "done": config.lists.done},
-            "system_prompt_preview": config.system_prompt[:100] if config.system_prompt else "",
-        }
-        for name, config in settings.worker_agents.items()
-    ]
+    """Return all worker agents with their list IDs and board context."""
+    workers = []
+    for board_name, board in settings.boards.items():
+        for name, config in board.workers.items():
+            workers.append({
+                "name": name,
+                "board": board_name,
+                "repo": config.repo or "(none)",
+                "repo_access": config.repo_access,
+                "output_mode": config.output_mode,
+                "lists": {"todo": config.lists.todo, "doing": config.lists.doing, "done": config.lists.done},
+                "system_prompt_preview": config.system_prompt[:100] if config.system_prompt else "",
+            })
     if not workers:
         return _text_result("No worker agents configured.")
     return _text_result(json.dumps(workers, indent=2))

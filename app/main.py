@@ -59,9 +59,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         desired[(worker.config.lists.todo, callback_url)] = f"karavan-worker-{name}"
     if orchestrator:
         callback_url = f"{webhook_base}/webhook/{orchestrator.name}"
-        desired[(orchestrator.config.board_id, callback_url)] = (
-            f"karavan-orchestrator-{orchestrator.name}"
-        )
+        for board_name, board in settings.boards.items():
+            desired[(board.board_id, callback_url)] = f"karavan-board-{board_name}"
 
     # Fetch existing webhooks and reconcile
     try:

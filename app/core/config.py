@@ -27,7 +27,6 @@ class WorkerListsConfig(BaseModel):
 class WorkerAgentConfig(BaseModel):
     """Configuration for a worker agent."""
 
-    type: Annotated[Literal["worker"], Field(description="Agent type")]
     lists: Annotated[WorkerListsConfig, Field(description="Trello list IDs")]
     repo: Annotated[str, Field(default="", description="Git repo SSH URL (required when repo_access is 'write')")]
     branch_prefix: Annotated[str, Field(default="", description="Branch prefix (required when repo_access is 'write')")]
@@ -59,18 +58,20 @@ class WorkerAgentConfig(BaseModel):
         return self
 
 
+class BoardConfig(BaseModel):
+    """Configuration for a Trello board containing workers."""
+
+    board_id: Annotated[str, Field(min_length=1, description="Trello board ID")]
+    failed_list_id: Annotated[str, Field(min_length=1, description="Trello list ID for failed cards")]
+    workers: Annotated[dict[str, WorkerAgentConfig], Field(default_factory=dict, description="Worker agents on this board")]
+
+
 class OrchestratorAgentConfig(BaseModel):
     """Configuration for the orchestrator agent."""
 
-    type: Annotated[Literal["orchestrator"], Field(description="Agent type")]
-    board_id: Annotated[str, Field(min_length=1, description="Trello board ID")]
     repos: Annotated[list[str], Field(min_items=1, description="Git repo SSH URLs for read access")]
-    failed_list_id: Annotated[str, Field(min_length=1, description="Shared Trello list ID for failed cards")]
     base_branch: Annotated[str, Field(default="main", description="Base branch to pull from repos")]
     system_prompt: Annotated[str, Field(default="", description="System prompt for Claude")]
-
-
-AgentConfig = WorkerAgentConfig | OrchestratorAgentConfig
 
 
 # --- Main settings ---
@@ -104,53 +105,71 @@ class Settings(BaseSettings):
     github_token: Annotated[str, Field(min_length=1, description="GitHub personal access token")]
 
     # Topology — loaded from config.json
-    agents: Annotated[dict[str, AgentConfig], Field(default_factory=dict, description="Agent configurations")]
+    boards: Annotated[dict[str, BoardConfig], Field(default_factory=dict, description="Board configurations")]
+    orchestrator: Annotated[OrchestratorAgentConfig | None, Field(default=None, description="Orchestrator configuration")]
 
     def model_post_init(self, __context: object) -> None:
-        """Load agent topology from config.json after env is loaded."""
-        if not self.agents:
+        """Load topology from config.json after env is loaded."""
+        if not self.boards and not self.orchestrator:
             config_path = BASE_DIR / "config.json"
             if config_path.exists():
                 with open(config_path) as f:
                     data = json.load(f)
-                agents_raw = data.get("agents", {})
-                parsed: dict[str, AgentConfig] = {}
-                for name, cfg in agents_raw.items():
-                    if cfg.get("type") == "worker":
-                        parsed[name] = WorkerAgentConfig(**cfg)
-                    elif cfg.get("type") == "orchestrator":
-                        parsed[name] = OrchestratorAgentConfig(**cfg)
-                    else:
-                        logger.warning("Unknown agent type for '%s': %s", name, cfg.get("type"))
-                self.agents = parsed
-                logger.info("Loaded %d agents from config.json", len(parsed))
+
+                # Parse boards
+                boards_raw = data.get("boards", {})
+                parsed_boards: dict[str, BoardConfig] = {}
+                for board_name, board_cfg in boards_raw.items():
+                    parsed_boards[board_name] = BoardConfig(**board_cfg)
+                self.boards = parsed_boards
+
+                # Parse orchestrator
+                orch_raw = data.get("orchestrator")
+                if orch_raw:
+                    self.orchestrator = OrchestratorAgentConfig(**orch_raw)
+
+                total_workers = sum(len(b.workers) for b in parsed_boards.values())
+                logger.info("Loaded %d boards with %d workers from config.json", len(parsed_boards), total_workers)
             else:
                 logger.warning("config.json not found at %s", config_path)
 
-    @property
-    def worker_agents(self) -> dict[str, WorkerAgentConfig]:
-        """Return only worker agent configs."""
-        return {k: v for k, v in self.agents.items() if isinstance(v, WorkerAgentConfig)}
+    @model_validator(mode="after")
+    def _validate_unique_worker_names(self) -> "Settings":
+        """Enforce unique worker names across all boards."""
+        seen: dict[str, str] = {}
+        for board_name, board in self.boards.items():
+            for worker_name in board.workers:
+                if worker_name in seen:
+                    raise ValueError(
+                        f"Duplicate worker name '{worker_name}' found in boards "
+                        f"'{seen[worker_name]}' and '{board_name}'"
+                    )
+                seen[worker_name] = board_name
+        return self
 
     @property
-    def orchestrator_agent(self) -> tuple[str, OrchestratorAgentConfig] | None:
-        """Return the orchestrator agent config (name, config) or None."""
-        for k, v in self.agents.items():
-            if isinstance(v, OrchestratorAgentConfig):
-                return k, v
-        return None
+    def all_workers(self) -> dict[str, WorkerAgentConfig]:
+        """Return all worker configs flattened across boards."""
+        workers: dict[str, WorkerAgentConfig] = {}
+        for board in self.boards.values():
+            workers.update(board.workers)
+        return workers
 
     @property
     def done_list_ids(self) -> set[str]:
-        """Return all known 'done' list IDs across workers."""
-        return {v.lists.done for v in self.worker_agents.values()}
+        """Return all known 'done' list IDs across all boards."""
+        return {config.lists.done for config in self.all_workers.values()}
 
     @property
-    def failed_list_id(self) -> str | None:
-        """Return the shared failed list ID from the orchestrator config, or None."""
-        orch = self.orchestrator_agent
-        if orch:
-            return orch[1].failed_list_id
+    def all_failed_list_ids(self) -> set[str]:
+        """Return all failed list IDs across all boards."""
+        return {board.failed_list_id for board in self.boards.values()}
+
+    def failed_list_for_worker(self, name: str) -> str | None:
+        """Return the failed list ID for the board containing the named worker."""
+        for board in self.boards.values():
+            if name in board.workers:
+                return board.failed_list_id
         return None
 
 

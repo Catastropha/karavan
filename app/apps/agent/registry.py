@@ -6,7 +6,7 @@ from typing import Any
 from app.apps.agent.base import BaseAgent
 from app.apps.agent.orchestrator import OrchestratorAgent
 from app.apps.agent.worker import WorkerAgent
-from app.core.config import OrchestratorAgentConfig, WorkerAgentConfig, settings
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -18,16 +18,17 @@ class AgentRegistry:
         self._agents: dict[str, BaseAgent] = {}
 
     def load_from_config(self) -> None:
-        """Instantiate agents from settings.agents config."""
-        for name, config in settings.agents.items():
-            if isinstance(config, WorkerAgentConfig):
-                self._agents[name] = WorkerAgent(name, config)
-                logger.info("Registered worker agent: %s", name)
-            elif isinstance(config, OrchestratorAgentConfig):
-                self._agents[name] = OrchestratorAgent(name, config)
-                logger.info("Registered orchestrator agent: %s", name)
-            else:
-                logger.warning("Unknown agent config type for '%s'", name)
+        """Instantiate agents from settings — orchestrator + workers grouped by board."""
+        # Orchestrator (always exactly one, hardcoded name)
+        if settings.orchestrator:
+            self._agents["orchestrator"] = OrchestratorAgent("orchestrator", settings.orchestrator)
+            logger.info("Registered orchestrator agent")
+
+        # Workers — iterate boards
+        for board_name, board in settings.boards.items():
+            for worker_name, worker_config in board.workers.items():
+                self._agents[worker_name] = WorkerAgent(worker_name, worker_config, board)
+                logger.info("Registered worker agent: %s (board: %s)", worker_name, board_name)
 
     def get_agent(self, name: str) -> BaseAgent | None:
         """Get an agent by name."""

@@ -1,65 +1,76 @@
 {
-  "agents": {
-    "api": {
-      "type": "worker",
-      "lists": {
-        "todo": "trello_list_id",
-        "doing": "trello_list_id",
-        "done": "trello_list_id"
-      },
-      "repo": "git@github.com:user/myproject-api.git",
-      "branch_prefix": "agent/api",
-      "base_branch": "main",
-      "system_prompt": "You are a FastAPI backend developer. Follow existing patterns in the codebase."
-    },
-    "static": {
-      "type": "worker",
-      "lists": {
-        "todo": "trello_list_id",
-        "doing": "trello_list_id",
-        "done": "trello_list_id"
-      },
-      "repo": "git@github.com:user/myproject-static.git",
-      "branch_prefix": "agent/static",
-      "base_branch": "main",
-      "system_prompt": "You are a frontend developer. Use the existing component library."
-    },
-    "reviewer": {
-      "type": "worker",
-      "repo_access": "read",
-      "output_mode": "comment",
-      "allowed_tools": ["Read", "Glob", "Grep"],
-      "lists": {
-        "todo": "trello_list_id",
-        "doing": "trello_list_id",
-        "done": "trello_list_id"
-      },
-      "repo": "git@github.com:user/myproject-api.git",
-      "base_branch": "main",
-      "system_prompt": "You are a code reviewer. Analyze the code and provide detailed feedback."
-    },
-    "planner": {
-      "type": "worker",
-      "repo_access": "none",
-      "output_mode": "cards",
-      "allowed_tools": ["list_workers", "create_trello_card", "get_card_status", "get_worker_cards"],
-      "lists": {
-        "todo": "trello_list_id",
-        "doing": "trello_list_id",
-        "done": "trello_list_id"
-      },
-      "system_prompt": "You break down ideas into concrete, actionable tasks for worker agents."
-    },
-    "orchestrator": {
-      "type": "orchestrator",
+  "boards": {
+    "backend": {
       "board_id": "trello_board_id",
-      "repos": [
-        "git@github.com:user/myproject-api.git",
-        "git@github.com:user/myproject-static.git"
-      ],
       "failed_list_id": "trello_list_id",
-      "base_branch": "main",
-      "system_prompt": "You are an engineering lead. Break features into clear tasks for worker agents."
+      "workers": {
+        "api": {
+          "lists": {
+            "todo": "trello_list_id",
+            "doing": "trello_list_id",
+            "done": "trello_list_id"
+          },
+          "repo": "git@github.com:user/myproject-api.git",
+          "branch_prefix": "agent/api",
+          "base_branch": "main",
+          "system_prompt": "You are a FastAPI backend developer. Follow existing patterns in the codebase."
+        },
+        "reviewer": {
+          "repo_access": "read",
+          "output_mode": "comment",
+          "allowed_tools": ["Read", "Glob", "Grep"],
+          "lists": {
+            "todo": "trello_list_id",
+            "doing": "trello_list_id",
+            "done": "trello_list_id"
+          },
+          "repo": "git@github.com:user/myproject-api.git",
+          "base_branch": "main",
+          "system_prompt": "You are a code reviewer. Analyze the code and provide detailed feedback."
+        }
+      }
+    },
+    "frontend": {
+      "board_id": "trello_board_id",
+      "failed_list_id": "trello_list_id",
+      "workers": {
+        "static": {
+          "lists": {
+            "todo": "trello_list_id",
+            "doing": "trello_list_id",
+            "done": "trello_list_id"
+          },
+          "repo": "git@github.com:user/myproject-static.git",
+          "branch_prefix": "agent/static",
+          "base_branch": "main",
+          "system_prompt": "You are a frontend developer. Use the existing component library."
+        }
+      }
+    },
+    "planning": {
+      "board_id": "trello_board_id",
+      "failed_list_id": "trello_list_id",
+      "workers": {
+        "planner": {
+          "repo_access": "none",
+          "output_mode": "cards",
+          "allowed_tools": ["list_workers", "create_trello_card", "get_card_status", "get_worker_cards"],
+          "lists": {
+            "todo": "trello_list_id",
+            "doing": "trello_list_id",
+            "done": "trello_list_id"
+          },
+          "system_prompt": "You break down ideas into concrete, actionable tasks for worker agents."
+        }
+      }
     }
+  },
+  "orchestrator": {
+    "repos": [
+      "git@github.com:user/myproject-api.git",
+      "git@github.com:user/myproject-static.git"
+    ],
+    "base_branch": "main",
+    "system_prompt": "You are an engineering lead. Break features into clear tasks for worker agents."
   }
 }

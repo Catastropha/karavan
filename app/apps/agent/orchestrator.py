@@ -41,7 +41,7 @@ class OrchestratorAgent(BaseAgent):
 
     def should_process_webhook(self, list_id: str) -> bool:
         """Process webhooks when a card enters any known done or failed list."""
-        return list_id in settings.done_list_ids or list_id == settings.failed_list_id
+        return list_id in settings.done_list_ids or list_id in settings.all_failed_list_ids
 
     async def start(self) -> None:
         """Clone repos and start the Claude SDK client before the run loop."""
@@ -104,7 +104,7 @@ class OrchestratorAgent(BaseAgent):
             await self._handle_user_message(item)
         elif isinstance(item, dict) and item.get("action_type"):
             list_after_id = item.get("list_after_id", "")
-            if list_after_id == settings.failed_list_id:
+            if list_after_id in settings.all_failed_list_ids:
                 await self._handle_failed_event(item)
             else:
                 await self._handle_done_event(item)
@@ -199,7 +199,7 @@ class OrchestratorAgent(BaseAgent):
         """Scan all workers' todo lists for cards whose dependencies are now fully satisfied."""
         unblocked: list[dict] = []
 
-        for worker_name, config in settings.worker_agents.items():
+        for worker_name, config in settings.all_workers.items():
             try:
                 cards = await get_list_cards(config.lists.todo)
             except Exception:
