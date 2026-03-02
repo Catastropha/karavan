@@ -1,0 +1,3 @@
+agents.yourdomain.com {
+	reverse_proxy karavan:8000
+}

@@ -70,14 +70,31 @@ All three fields have backward-compatible defaults (`write`, `pr`, full tool lis
 
 You need tokens from four services:
 
-| Service | What to get | Where |
-|---------|-------------|-------|
-| **Trello** | API key + token | https://trello.com/power-ups/admin — generate a key, then click the token link to authorize |
-| **Telegram** | Bot token | Message [@BotFather](https://t.me/BotFather) on Telegram, run `/newbot` |
-| **Anthropic** | API key | https://console.anthropic.com/settings/keys |
-| **GitHub** | Personal access token | GitHub → Settings → Developer settings → Personal access tokens (needs `repo` scope) |
+**Trello** — API key, secret, and token:
+1. Go to https://trello.com/power-ups/admin
+2. Click **New** to create a Power-Up (or use an existing one)
+3. Copy the **API Key** → `TRELLO_API_KEY`
+4. On the same page, copy the **API Secret** → `TRELLO_API_SECRET` (used for webhook signature verification)
+5. Next to the API key there's a **Token** link — click it, authorize, copy the token → `TRELLO_TOKEN`
 
-You also need your **Telegram user ID** — message [@userinfobot](https://t.me/userinfobot) to get it.
+**Telegram** — bot token and your user ID:
+1. Message [@BotFather](https://t.me/BotFather) on Telegram, run `/newbot`, follow the prompts → copy the bot token → `TELEGRAM_BOT_TOKEN`
+2. Message [@userinfobot](https://t.me/userinfobot) to get your numeric user ID → `TELEGRAM_ALLOWED_USER_IDS=[your_id]`
+
+**Anthropic** — API key:
+1. Go to https://console.anthropic.com/settings/keys and create a key → `ANTHROPIC_API_KEY`
+2. Note: this is separate from a claude.ai subscription — you need to add credits on the API console, which is pay-per-use
+
+**GitHub** — personal access token (for creating PRs via the API):
+- **Personal repos:** GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → generate with `repo` scope
+- **Organization repos:** Use a **Fine-grained token** instead — set the resource owner to your org, select specific repos, and grant **Contents** (read/write) + **Pull requests** (read/write) permissions. Your org admin may need to approve it.
+- Copy the token → `GITHUB_TOKEN`
+
+**SSH key** — for git operations (clone, push):
+1. Generate on the VPS: `ssh-keygen -t ed25519 -C "karavan" -f ~/.ssh/id_ed25519` (no passphrase)
+2. `chmod 600 ~/.ssh/id_ed25519`
+3. Add the public key (`cat ~/.ssh/id_ed25519.pub`) to GitHub — either in your account's SSH keys or as a deploy key on each repo (with write access enabled)
+4. Test: `ssh -T git@github.com`
 
 ### 3. Set Up the Trello Board
 
@@ -85,11 +102,20 @@ You also need your **Telegram user ID** — message [@userinfobot](https://t.me/
 2. For **each worker agent** you want, create three lists: `Todo`, `Doing`, `Done`
    - Example: `API Todo`, `API Doing`, `API Done` for a backend worker
 3. Create one **Failed** list shared across all agents
-4. Copy each list's ID — open a list, add `.json` to the Trello URL in your browser to find IDs, or use the Trello API:
-   ```
+4. Copy the **board ID** — it's in the board URL: `trello.com/b/AbCdEfGh/my-board` → `AbCdEfGh`
+5. Get all **list IDs** using the API:
+   ```bash
    curl "https://api.trello.com/1/boards/{board_id}/lists?key={key}&token={token}"
    ```
-5. Copy the **board ID** (visible in the board URL: `trello.com/b/{board_id}/...`)
+   This returns each list with its ID:
+   ```json
+   [
+     { "id": "6830abc123def...", "name": "API Todo" },
+     { "id": "6830abc123def...", "name": "API Doing" },
+     { "id": "6830abc123def...", "name": "API Done" }
+   ]
+   ```
+   Map these to your `config.json` under each worker's `lists.todo`, `lists.doing`, `lists.done`, and the board's `failed_list_id`.
 
 ### 4. Clone and Install
 
@@ -110,24 +136,31 @@ cp .env.example .env
 cp config.json.example config.json
 ```
 
-Fill in `.env` with your secrets:
+Fill in `.env` with the credentials from step 2:
 
 ```bash
-TRELLO_API_KEY=your_trello_api_key
-TRELLO_API_SECRET=your_trello_api_secret
-TRELLO_TOKEN=your_trello_token
-ANTHROPIC_API_KEY=sk-ant-...
-TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
-TELEGRAM_SECRET=any-random-string-you-make-up
-TELEGRAM_ALLOWED_USER_IDS=[your_telegram_user_id]
-GIT_SSH_KEY_PATH=/home/you/.ssh/id_ed25519
-WEBHOOK_BASE_URL=https://agents.yourdomain.com
-GITHUB_TOKEN=ghp_...
-```
+# Trello (from power-ups admin page)
+TRELLO_API_KEY=
+TRELLO_API_SECRET=
+TRELLO_TOKEN=
 
-- `TELEGRAM_SECRET` — any random string. It becomes part of the webhook URL so only Telegram can reach it.
-- `WEBHOOK_BASE_URL` — your server's public HTTPS URL, no trailing slash.
-- `GIT_SSH_KEY_PATH` — path to the SSH private key that has push access to your repos.
+# Anthropic (from console.anthropic.com)
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Telegram (from BotFather + userinfobot)
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+TELEGRAM_ALLOWED_USER_IDS=[your_numeric_user_id]
+
+# Telegram webhook auth — generate with: openssl rand -hex 32
+TELEGRAM_SECRET=
+
+# Git / GitHub
+GIT_SSH_KEY_PATH=/root/.ssh/id_ed25519
+GITHUB_TOKEN=ghp_...
+
+# Your server's public HTTPS URL (no trailing slash) — must match your Caddyfile domain
+WEBHOOK_BASE_URL=https://agents.yourdomain.com
+```
 
 ### 6. Configure Agents
 
@@ -256,33 +289,69 @@ In this setup:
 
 The orchestrator can chain them: assign a feature to the coder, and after the coder finishes, send a review card to the reviewer or a critique card to the critic. Worker names must be unique across all boards.
 
-### 7. Set Up HTTPS
+### 7. Deploy to a VPS
 
-Trello and Telegram require HTTPS webhook URLs. The simplest option is [Caddy](https://caddyserver.com/), which handles certificates automatically:
+Trello and Telegram require HTTPS webhook URLs, so you need a server with a public IP and a domain name pointed at it.
+
+**Prerequisites on the VPS:**
+- Docker and Docker Compose installed
+- DNS A record pointing your domain (e.g. `agents.yourdomain.com`) to the VPS IP
+- Ports 80 and 443 open in your firewall
+- An SSH key (`~/.ssh/id_ed25519`) with push access to your GitHub repos
+
+**Deploy:**
+
+```bash
+git clone https://github.com/yourusername/karavan.git /opt/karavan
+cd /opt/karavan
+
+cp .env.example .env              # fill in all secrets
+cp config.json.example config.json # fill in board/worker config
+```
+
+Edit `_devops/Caddyfile` — replace `agents.yourdomain.com` with your actual domain:
 
 ```
-# /etc/caddy/Caddyfile
 agents.yourdomain.com {
-    reverse_proxy localhost:8000
+    reverse_proxy karavan:8000
 }
 ```
 
-Or use nginx with Let's Encrypt, a cloud load balancer, or any other reverse proxy that terminates TLS.
+Make sure `WEBHOOK_BASE_URL` in `.env` matches the domain in your Caddyfile.
 
-### 8. Start Karavan
+Start everything:
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+cd _devops
+docker compose up -d
 ```
 
-On startup, Karavan automatically:
+Caddy automatically provisions Let's Encrypt HTTPS certificates. Karavan starts and on startup automatically:
 1. Creates HTTP clients for Trello, Telegram, and GitHub
 2. Clones all configured repos into `repos/`
 3. Starts agent run loops
 4. Registers Trello webhooks on each worker's `todo` list and the orchestrator's board
 5. Registers the Telegram webhook with your bot
 
-### 9. Talk to It
+**Useful commands:**
+
+```bash
+docker compose -f _devops/docker-compose.yml logs -f karavan  # follow app logs
+docker compose -f _devops/docker-compose.yml restart karavan   # restart after config change
+docker compose -f _devops/docker-compose.yml down              # stop everything
+```
+
+**Without Docker** (alternative — run directly):
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Then put Caddy or nginx in front for HTTPS.
+
+### 8. Talk to It
 
 Open Telegram, find your bot, and send a message:
 
