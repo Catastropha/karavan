@@ -23,33 +23,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Global registry reference for access in other modules
-registry = AgentRegistry()
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Manage application lifecycle — startup and shutdown."""
-    # --- Startup ---
-    logger.info("Starting Karavan...")
-
-    # 1. Start shared HTTP clients
-    await res.startup()
-
-    # 2. Load and start agents
-    registry.load_from_config()
-
-    # Wire up orchestrator queue to bot route
-    orchestrator = registry.orchestrator
-    if orchestrator:
-        set_orchestrator_queue(orchestrator.queue)
-
-    # Wire up agent registry to hook route
-    set_agent_registry(registry)
-
-    await registry.start_all()
-
-    # 3. Register Trello webhooks (deduplicate — clean stale, skip existing)
+async def _reconcile_trello_webhooks(registry: AgentRegistry) -> None:
+    """Register Trello webhooks, deduplicating and cleaning stale ones."""
     webhook_base = settings.webhook_base_url
 
     # Build desired webhook specs: {(model_id, callback_url): description}
@@ -57,6 +33,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     for name, worker in registry.workers.items():
         callback_url = f"{webhook_base}/webhook/{name}"
         desired[(worker.config.lists.todo, callback_url)] = f"karavan-worker-{name}"
+    orchestrator = registry.orchestrator
     if orchestrator:
         callback_url = f"{webhook_base}/webhook/{orchestrator.name}"
         for board_name, board in settings.boards.items():
@@ -74,10 +51,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     for wh in existing:
         key = (wh.id_model, wh.callback_url)
         if key in desired:
-            # Exact match exists — keep it
             already_registered.add(key)
         elif wh.description.startswith("karavan-"):
-            # Stale karavan webhook (old URL or removed agent) — delete it
             try:
                 await delete_webhook(wh.id)
                 logger.info("Deleted stale webhook %s (%s)", wh.id, wh.description)
@@ -99,7 +74,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception:
             logger.exception("Failed to register Trello webhook: %s", description)
 
-    # 4. Register Telegram webhook
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Manage application lifecycle — startup and shutdown."""
+    logger.info("Starting Karavan...")
+
+    await res.startup()
+
+    registry = AgentRegistry()
+    registry.load_from_config()
+
+    orchestrator = registry.orchestrator
+    if orchestrator:
+        set_orchestrator_queue(orchestrator.queue)
+    set_agent_registry(registry)
+
+    await registry.start_all()
+    await _reconcile_trello_webhooks(registry)
+
     try:
         await register_telegram_webhook()
     except Exception:
@@ -109,7 +102,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
-    # --- Shutdown ---
     logger.info("Shutting down Karavan...")
     await registry.stop_all()
     await res.shutdown()
@@ -125,6 +117,5 @@ app = FastAPI(
 
 setup_middleware(app)
 
-# Include routers
 app.include_router(bot_router)
 app.include_router(hook_router)

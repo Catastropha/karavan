@@ -36,7 +36,7 @@ class RateLimitedTransport(httpx.AsyncBaseTransport):
                 now = time.monotonic()
                 self._timestamps = [t for t in self._timestamps if now - t < self._window]
                 if len(self._timestamps) < self._max_requests:
-                    self._timestamps.append(time.monotonic())
+                    self._timestamps.append(now)
                     return
                 wait_time = self._window - (now - self._timestamps[0]) + 0.1
             logger.debug("Trello rate limit capacity reached, waiting %.1fs", wait_time)

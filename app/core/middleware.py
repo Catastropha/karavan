@@ -2,6 +2,7 @@
 
 import logging
 import time
+from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,10 +11,10 @@ from fastapi.responses import JSONResponse
 logger = logging.getLogger(__name__)
 
 
-async def request_logging_middleware(request: Request, call_next: object) -> Response:
+async def request_logging_middleware(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
     """Log request method, path, and response time."""
     start = time.monotonic()
-    response: Response = await call_next(request)  # type: ignore[call-arg]
+    response = await call_next(request)
     elapsed_ms = (time.monotonic() - start) * 1000
     logger.info(
         "%s %s -> %d (%.1fms)",
