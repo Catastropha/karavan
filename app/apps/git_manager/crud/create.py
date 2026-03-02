@@ -41,6 +41,6 @@ async def clone_repo(repo_url: str, target_dir: str | Path) -> None:
 
 
 async def create_branch(repo_dir: str | Path, branch_name: str) -> None:
-    """Create and checkout a new branch from current HEAD."""
-    await _run_git(["git", "checkout", "-b", branch_name], cwd=repo_dir)
+    """Create and checkout a branch, resetting it to HEAD if it already exists."""
+    await _run_git(["git", "checkout", "-B", branch_name], cwd=repo_dir)
     logger.info("Created branch %s in %s", branch_name, repo_dir)

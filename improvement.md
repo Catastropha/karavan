@@ -81,7 +81,7 @@ Weaknesses and improvements identified from a full codebase analysis. Work throu
 - **Fix:** Implement proper markdown-to-MarkdownV2 conversion covering: code blocks (preserve as-is, only escape inside), inline code, links, bullet lists. Or fall back to `parse_mode=None` for plain text when escaping fails.
 
 ### 12. Branch creation fails on retry
-- **Status:** TODO
+- **Status:** DONE
 - **File(s):** `app/apps/git_manager/crud/create.py:create_branch()`
 - **Problem:** Uses `git checkout -b` which fails if the branch already exists (e.g., when retrying a failed card). The error crashes the card execution.
 - **Fix:** Use `git checkout -B` (force-create) or check if the branch exists first and delete/reset it.
