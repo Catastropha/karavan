@@ -51,18 +51,23 @@ You (Telegram) ←→ Orchestrator Agent
 - Clones all repos into `repos/orchestrator/{repo_name}/` on startup, pulls before each planning session
 - Uses `ClaudeSDKClient` for persistent multi-turn conversation context with the user
 - Has read access to all repos via `add_dirs` on `ClaudeAgentOptions`
-- Breaks features into tasks, creates Trello cards in worker agents' `todo` lists
+- Creates Trello cards via custom MCP tools (`create_trello_card`, `list_workers`, `get_card_status`, `get_worker_cards`) exposed to the SDK agent through `create_sdk_mcp_server`
 - Monitors `done` lists via a single board-level Trello webhook (filters by known `done` list IDs)
-- Validates work, reports back via Telegram
+- On card completion: extracts PR link from card comments, checks for newly unblocked dependent cards, sends rich Telegram notification with PR URL
+- Tracks `chat_id` from actual conversations (not just `user_id`) for correct Telegram notifications in both private and group chats
 - Can request revisions by moving cards back to `todo` with a comment
 
 **Worker (N per project):**
 - Watches its own `todo` list via a list-level Trello webhook
+- Deduplicates cards via an in-memory `_processed_cards` set — skips cards already being worked on
 - Picks up a card → moves to `doing`
-- Uses `query()` (one-shot, stateless) scoped to its cloned repo directory via `cwd`
+- Uses `query()` (one-shot, stateless) scoped to its cloned repo directory via `cwd`, with a rich prompt template including repo/branch context, explicit rules (no git commands, write code don't explain), and completion instructions
+- Validates agent output: if no code changes produced, comments failure on card and moves to `failed` list instead of creating an empty PR
 - Commits to a branch, pushes, opens PR via GitHub API
-- Comments result/PR link on the Trello card
+- Comments PR link and cost (`$X.XXXX`) on the Trello card
+- Sends real-time progress updates to Telegram via edit-in-place messages (tool use summaries every 10s)
 - Moves card to `done`
+- On failure: tracks retry count via `[karavan:fail]` comment prefix, retries up to `MAX_RETRIES=3`, then moves to `failed` list
 
 ### Event Flow
 
@@ -71,24 +76,31 @@ You (Telegram) ←→ Orchestrator Agent
 2. Telegram POSTs to /telegram/{secret} → BotMessage pushed to orchestrator's asyncio.Queue
 3. Orchestrator reads repos, proposes plan → sends response via Telegram sendMessage
 4. User approves (or adjusts) via inline keyboard → another webhook POST
-5. Orchestrator creates Trello cards in workers' todo lists
-6. Trello webhook fires → POST /webhook/{agent_name}
+5. Orchestrator creates Trello cards via MCP tools (create_trello_card) in workers' todo lists
+6. Trello webhook fires → POST /webhook/{agent_name} (verified via HMAC-SHA1 signature)
 7. Worker agent:
-   a. Moves card to doing
-   b. git pull origin main
-   c. git checkout -b {branch_prefix}/card-{id}
-   d. Claude Agent SDK query() executes with card description as prompt
-   e. git commit + push
-   f. Opens GitHub PR via API
-   g. Comments PR link on Trello card
-   h. Moves card to done
-8. Orchestrator board webhook detects card moved to done → notifies user via Telegram
+   a. Checks dedup set — skips if card already in progress
+   b. Moves card to doing
+   c. Sends initial progress message to Telegram (edit-in-place)
+   d. git pull origin {base_branch}
+   e. git checkout -B {branch_prefix}/card-{id} (idempotent, handles retries)
+   f. Claude Agent SDK query() with rich prompt (repo context, rules, card description)
+   g. Streams progress updates to Telegram every 10s (tool use summaries)
+   h. Validates changes — if no diff, comments failure, moves to failed list
+   i. git commit + push
+   j. Opens GitHub PR via API
+   k. Comments PR link + cost on Trello card
+   l. Moves card to done
+   m. On failure: increments retry counter (via comments), retries up to 3x, then moves to failed list
+8. Orchestrator board webhook detects card moved to done → extracts PR link from comments → checks for unblocked dependent cards → notifies user via Telegram with PR URL
 ```
 
 ### Webhook Strategy
 
 - **Workers** register a list-level webhook on their `todo` list. Only fires when cards enter that list.
 - **Orchestrator** registers a single board-level webhook. Filters incoming events by `action.data.listAfter.id` matching any known `done` list ID. One webhook instead of N — simpler to manage, fewer API calls on startup, automatically picks up new lists.
+- **Deduplication on startup:** On startup, fetches all existing webhooks for the Trello token. Skips registration if an identical webhook exists. Deletes stale `karavan-*` webhooks (old URLs, removed agents). Prevents duplicate webhooks from accumulating across restarts.
+- **Payload verification:** All incoming webhook POSTs are verified via `HMAC-SHA1(trello_api_secret, body + callback_url)` against the `x-trello-webhook` header. Invalid signatures are logged and silently accepted (return 200 to prevent Trello retries).
 
 ### Dependency Handling
 
@@ -150,6 +162,7 @@ TELEGRAM_ALLOWED_USER_IDS=[123456789]
 GIT_SSH_KEY_PATH=/root/.ssh/id_ed25519
 WEBHOOK_BASE_URL=https://agents.yourdomain.com
 GITHUB_TOKEN=
+TRELLO_API_SECRET=            # Trello OAuth secret, used for webhook HMAC-SHA1 signature verification
 ```
 
 ### Topology — `config.json` (safe to commit, no secrets)
@@ -166,6 +179,7 @@ GITHUB_TOKEN=
       },
       "repo": "git@github.com:user/myproject-api.git",
       "branch_prefix": "agent/api",
+      "base_branch": "main",
       "system_prompt": "You are a FastAPI backend developer. Follow existing patterns in the codebase."
     },
     "static": {
@@ -177,6 +191,7 @@ GITHUB_TOKEN=
       },
       "repo": "git@github.com:user/myproject-static.git",
       "branch_prefix": "agent/static",
+      "base_branch": "main",
       "system_prompt": "You are a frontend developer. Use the existing component library."
     },
     "orchestrator": {
@@ -198,7 +213,7 @@ GITHUB_TOKEN=
 
 ## Feature Roadmap
 
-### v0.1 — MVP
+### v0.1 — MVP (done)
 
 - FastAPI webhook server receiving Trello events
 - Trello async client (cards, lists, move, comment, webhook registration)
@@ -207,13 +222,27 @@ GITHUB_TOKEN=
 - Config from `.env` + `config.json`
 - Logging to stdout
 
-### v0.2 — Usable
+### v0.2 — Usable (done)
 
-- Card dependency tracking (orchestrator holds cards until deps clear)
-- Orchestrator watches `done` lists and reports progress via Telegram
-- Retry logic: on agent failure, comment error on card, move back to `todo`
+- Card dependency tracking (orchestrator parses `## Dependencies` sections, unblocks cards when deps complete)
+- Orchestrator watches `done` lists and reports progress via Telegram (with PR links)
+- Retry logic: on agent failure, comment `[karavan:fail]` on card, retry up to 3x, then move to `failed` list
 - Agent system prompts loaded from config
 - GitHub PR creation via API with card link in PR body
+- Orchestrator MCP tools for card creation (`create_trello_card`, `list_workers`, `get_card_status`, `get_worker_cards`)
+- Worker change validation (no empty PRs)
+- Card deduplication via in-memory processed set
+- Webhook deduplication on startup (reconcile existing, delete stale)
+- Trello API rate limiting (sliding-window + 429 retry with backoff)
+- Trello webhook payload HMAC-SHA1 signature verification
+- Rich worker prompt template (repo context, rules, completion instructions)
+- Configurable `base_branch` per agent (default: `main`)
+- Idempotent branch creation (`git checkout -B`)
+- Real-time worker progress feedback via Telegram edit-in-place messages
+- Cost tracking per card/agent, exposed via health endpoint
+- Rich health endpoint (per-agent status, queue depth, cost summaries)
+- Improved MarkdownV2 escaping (code blocks, inline code, links, bold)
+- Chat ID tracking from conversations for correct Telegram notifications in groups
 
 ### v0.3 — Polish
 
@@ -221,7 +250,6 @@ GITHUB_TOKEN=
 - Caddy HTTPS setup guide
 - Multiple projects/boards support
 - Card templates
-- Cost tracking (log Claude API token usage per card)
 
 ### v1.0 — Community
 
@@ -241,9 +269,10 @@ GITHUB_TOKEN=
 - Webhook payload parsing and validation via Pydantic models
 
 ### `agent` app
-- BaseAgent class: async queue, lifecycle (start/stop), card pickup logic
-- WorkerAgent: inherits BaseAgent, uses `query()` (one-shot) scoped to a repo via `cwd`, handles the full card lifecycle (todo → doing → done)
-- OrchestratorAgent: inherits BaseAgent, uses `ClaudeSDKClient` (multi-turn) for persistent conversation, connected to Telegram, creates/monitors cards, handles dependency tracking
+- BaseAgent class: async queue, lifecycle (start/stop), card pickup logic, per-agent status tracking (running, queue depth, last activity, cards processed)
+- WorkerAgent: inherits BaseAgent, uses `query()` (one-shot) scoped to a repo via `cwd`, handles the full card lifecycle (todo → doing → done), validates agent output, retries with counter (max 3), deduplicates via `_processed_cards` set, sends real-time progress to Telegram
+- OrchestratorAgent: inherits BaseAgent, uses `ClaudeSDKClient` (multi-turn) for persistent conversation, connected to Telegram, creates/monitors cards via MCP tools, handles dependency tracking (parses `## Dependencies`, unblocks cards), extracts PR links from comments, tracks `chat_id` from conversations
+- `tools.py`: MCP tool definitions (`create_trello_card`, `list_workers`, `get_card_status`, `get_worker_cards`) exposed to orchestrator SDK via `create_sdk_mcp_server`
 - Agent registry: loads agents from config.json, starts them on app lifespan
 
 ### `git_manager` app
@@ -254,19 +283,20 @@ GITHUB_TOKEN=
 
 ### `bot` app
 - Telegram webhook route: receives POSTs at `/telegram/{secret}`, parses into Pydantic models, pushes `BotMessage` to orchestrator's queue
-- Telegram send helpers: `send_message`, `send_typing_action` via shared httpx client
-- MarkdownV2 escaping utility for LLM output
+- Telegram send helpers: `send_message`, `edit_message`, `send_typing_action` via shared httpx client
+- MarkdownV2 conversion: tokenizer-based approach handling fenced code blocks, inline code, links, bold, with proper escaping per context; `strip_markdown_v2` fallback for when Telegram rejects the formatted message
 - Webhook registration on app startup via `setWebhook` API call
 - Allowed user ID filtering from config
-- Inline keyboard for approve/reject plan confirmation
 
 ### `hook` app
 - Route: `HEAD /webhook/{agent_name}` — Trello verification
-- Route: `POST /webhook/{agent_name}` — receives Trello events, filters for card moves to `todo` lists, pushes to the correct agent's async queue
-- Route: `GET /health` — basic health check
+- Route: `POST /webhook/{agent_name}` — receives Trello events, verifies HMAC-SHA1 signature via `x-trello-webhook` header, filters for card moves to `todo`/`done` lists, pushes to the correct agent's async queue
+- Route: `GET /health` — returns per-agent status (running, queue depth, last activity, cards processed), per-agent cost summaries (cost, tokens, executions), and aggregate cost totals
 
 ### `common` app
-- Shared Pydantic models used across apps
+- Shared Pydantic models used across apps (`BotMessage`, etc.)
+- `cost.py`: `CostTracker` singleton — records per-agent cost/token usage from `ResultMessage`, exposes summaries for the health endpoint
+- `progress.py`: `ProgressTracker` — edit-in-place Telegram messages during worker execution, streams tool use summaries (Read/Edit/Bash/Glob/Grep), flushes every 10s with 10s minimum gap between edits
 - Shared utilities (logging helpers, async helpers)
 - Shared exceptions
 
@@ -277,8 +307,8 @@ GITHUB_TOKEN=
 ### Trello Client
 - Shared httpx async client lives in `core/resource.py` as a singleton with base URL `https://api.trello.com/1/`
 - All requests include `key` and `token` query params from config
-- Rate limit: 100 requests per 10 seconds per token — implement simple rate limiting
-- Register webhooks on app startup, pointing to `{WEBHOOK_BASE_URL}/webhook/{agent_name}`
+- Rate limiting via `RateLimitedTransport` (custom `httpx.AsyncBaseTransport`): proactive sliding-window (90 requests per 10s, under Trello's 100 limit), reactive 429 retry with exponential backoff (respects `retry-after` header, up to 3 retries)
+- Webhook reconciliation on startup: fetches existing webhooks, skips already-registered ones, deletes stale `karavan-*` webhooks, registers missing ones
 - Workers register list-level webhooks on their `todo` list
 - Orchestrator registers a single board-level webhook, filters events by known `done` list IDs
 
@@ -308,13 +338,19 @@ async for message in query(
     # process messages, collect ResultMessage at end
 ```
 
-**Orchestrator uses `ClaudeSDKClient` (multi-turn, persistent context):**
+**Orchestrator uses `ClaudeSDKClient` (multi-turn, persistent context) with MCP tools:**
 ```python
-from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, create_sdk_mcp_server
+
+# MCP server exposes Trello operations as tools
+mcp_server = create_sdk_mcp_server("karavan_orchestrator", tools=[
+    create_trello_card, list_workers, get_card_status, get_worker_cards
+])
 
 client = ClaudeSDKClient(options=ClaudeAgentOptions(
     add_dirs=["/path/to/repos/orchestrator/repo-a", "/path/to/repos/orchestrator/repo-b"],
-    allowed_tools=["Read", "Glob", "Grep"],  # read-only access to repos
+    allowed_tools=["Read", "Glob", "Grep",
+                   "create_trello_card", "list_workers", "get_card_status", "get_worker_cards"],
     system_prompt={
         "type": "preset",
         "preset": "claude_code",
@@ -322,6 +358,7 @@ client = ClaudeSDKClient(options=ClaudeAgentOptions(
     },
     permission_mode="bypassPermissions",
     setting_sources=["project"],
+    mcp_servers={"karavan": mcp_server},
 ))
 async with client:
     await client.query(user_message_from_telegram)
@@ -340,7 +377,9 @@ async with client:
 - Worker repos cloned to `repos/{agent_name}/` directory (one repo per worker)
 - Orchestrator repos cloned to `repos/orchestrator/{repo_name}/` directory (all repos, read-only for context)
 - Branch naming: `{branch_prefix}/card-{card_id_short}` (last 6 chars of card ID)
-- Always pull main before creating a new branch
+- Always pull `base_branch` (configurable per agent, default `main`) before creating a new branch
+- Branch creation uses `git checkout -B` (idempotent — resets branch if it already exists from a previous failed run)
+- Change validation: after agent runs, checks `git diff --cached --quiet` — if no changes, skips commit/push/PR and reports failure
 - Commit message: `[karavan] {card_name}` with card URL in commit body
 
 ### Telegram Bot
@@ -362,7 +401,8 @@ async with client:
 **Sending messages — async httpx:**
 - All outbound calls use the shared httpx client from `core/resource.py` against `https://api.telegram.org/bot{token}/`
 - `sendMessage` with `parse_mode=MarkdownV2` for formatted responses
-- MarkdownV2 escaping: split on `**bold**` markers, convert to Telegram's `*bold*`, escape all special chars in the rest
+- MarkdownV2 conversion via regex tokenizer: handles fenced code blocks (preserves language tag, only escapes `` ` `` and `\` inside), inline code, markdown links (`[text](url)`), bold (`**text**` → `*text*`), and plain text (escapes all special chars). Falls back to `strip_markdown_v2` (plain text) if Telegram rejects the formatted message.
+- `editMessageText` for in-place progress updates during worker execution
 - `sendChatAction` (typing indicator) while orchestrator is thinking
 
 **Pydantic models (bot app):**
@@ -406,7 +446,8 @@ class BotMessage(BaseModel):
 
 ### Webhook Server
 - Trello sends HEAD first to verify URL — must return 200
-- On POST, extract `action.type` and `action.data.listAfter.id`
+- On POST, verify HMAC-SHA1 signature from `x-trello-webhook` header using `trello_api_secret` against `body + callback_url`. Invalid signatures are logged as warnings but still return 200 (to prevent Trello retries).
+- Extract `action.type` and `action.data.listAfter.id`
 - For worker webhooks: only process events where a card enters that worker's `todo` list
 - For orchestrator webhook (board-level): only process events where a card enters any known `done` list
 - Push relevant action data into the correct agent's asyncio.Queue
