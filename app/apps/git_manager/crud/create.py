@@ -2,31 +2,35 @@
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-GIT_SSH_COMMAND = f"ssh -i {settings.git_ssh_key_path} -o StrictHostKeyChecking=no"
+_GIT_ENV = {**os.environ, "GIT_SSH_COMMAND": f"ssh -i {settings.git_ssh_key_path} -o StrictHostKeyChecking=no"}
 
 
-async def _run_git(cmd: list[str], cwd: str | Path | None = None) -> str:
-    """Run a git command via subprocess, return stdout."""
-    env = {"GIT_SSH_COMMAND": GIT_SSH_COMMAND}
+async def _run_git(cmd: list[str], cwd: str | Path | None = None, *, check: bool = True) -> tuple[int, str]:
+    """Run a git command via subprocess. Returns (returncode, stdout).
+
+    When *check* is True (default), raises RuntimeError on non-zero exit.
+    When False, returns the exit code so callers can branch on it.
+    """
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         cwd=str(cwd) if cwd else None,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        env={**__import__("os").environ, **env},
+        env=_GIT_ENV,
     )
     stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
+    if check and proc.returncode != 0:
         error_msg = stderr.decode().strip()
         logger.error("Git command failed: %s -> %s", " ".join(cmd), error_msg)
         raise RuntimeError(f"Git command failed: {error_msg}")
-    return stdout.decode().strip()
+    return proc.returncode, stdout.decode().strip()
 
 
 async def clone_repo(repo_url: str, target_dir: str | Path) -> None:

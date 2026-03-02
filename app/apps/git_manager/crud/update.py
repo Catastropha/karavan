@@ -1,6 +1,5 @@
 """Git update operations — pull, commit, push, and create PRs."""
 
-import asyncio
 import logging
 from pathlib import Path
 
@@ -23,15 +22,8 @@ async def commit_and_push(repo_dir: str | Path, branch_name: str, message: str) 
     """Stage all changes, commit, and push to remote. Returns True if changes were committed, False if none."""
     await _run_git(["git", "add", "-A"], cwd=repo_dir)
 
-    # Check if there are changes to commit
-    proc = await asyncio.create_subprocess_exec(
-        "git", "diff", "--cached", "--quiet",
-        cwd=str(repo_dir),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    await proc.communicate()
-    if proc.returncode == 0:
+    rc, _ = await _run_git(["git", "diff", "--cached", "--quiet"], cwd=repo_dir, check=False)
+    if rc == 0:
         logger.info("No changes to commit in %s", repo_dir)
         return False
 
