@@ -2,7 +2,7 @@
 
 A caravan of camels (agents)
 
-Turns Trello boards into a communication protocol between AI coding agents. You talk to an orchestrator via Telegram, it breaks work into Trello cards, worker agents pick them up, write code, push branches, and open PRs — autonomously.
+Turns Trello boards into a communication protocol between AI agents. You talk to an orchestrator via Telegram, it breaks work into Trello cards, worker agents pick them up and execute them — writing code, analyzing repos, creating sub-tasks, or refining specs — autonomously.
 
 ```
 You (Telegram) ←→ Orchestrator Agent
@@ -12,9 +12,51 @@ You (Telegram) ←→ Orchestrator Agent
               ┌─────────┼─────────┐
               ↓         ↓         ↓
           Worker A   Worker B   Worker C
+          (coder)   (reviewer) (planner)
            ↓           ↓          ↓
-         repo A      repo B     repo C
+         repo A      repo A     Trello
+         (write)     (read)     (cards)
 ```
+
+## Configurable Agent Behaviors
+
+Workers aren't limited to writing code. Each worker's behavior is defined by three orthogonal config axes that combine freely:
+
+**`repo_access`** — does the agent need a repository?
+
+| Mode | What happens | Use case |
+|------|-------------|----------|
+| `write` | Clone, pull, branch, commit, push | Coders — write code, open PRs |
+| `read` | Clone, pull (read-only context) | Reviewers — analyze code |
+| `none` | No git operations | Planners — pure reasoning |
+
+**`output_mode`** — what does the agent produce?
+
+| Mode | What happens on completion | Use case |
+|------|---------------------------|----------|
+| `pr` | Commit, push, open GitHub PR | Code changes |
+| `comment` | Post analysis as a Trello card comment | Reviews, feedback |
+| `cards` | Create new Trello cards via MCP tools | Task breakdown, planning |
+| `update` | Rewrite the card's description | Spec refinement |
+
+**`allowed_tools`** — what the agent can do during execution
+
+| Profile | Tools | Use case |
+|---------|-------|----------|
+| Full coding | `Read, Write, Edit, Bash, Glob, Grep` | Code workers (default) |
+| Read-only | `Read, Glob, Grep` | Reviewers, analysts |
+| MCP-only | `list_workers, create_trello_card, ...` | Planners, card creators |
+
+These combine into different agent personas:
+
+| Agent | repo_access | output_mode | Description |
+|-------|-------------|-------------|-------------|
+| Coder | `write` | `pr` | Writes code, opens PRs |
+| Reviewer | `read` | `comment` | Reads code, posts analysis |
+| Planner | `none` | `cards` | Breaks ideas into tasks for other agents |
+| Improver | `read` | `update` | Refines vague card specs into detailed ones |
+
+All three fields have backward-compatible defaults (`write`, `pr`, full tool list) — existing configs work without changes.
 
 ## Launch Guide
 
@@ -42,11 +84,12 @@ You also need your **Telegram user ID** — message [@userinfobot](https://t.me/
 1. Create a new Trello board for your project
 2. For **each worker agent** you want, create three lists: `Todo`, `Doing`, `Done`
    - Example: `API Todo`, `API Doing`, `API Done` for a backend worker
-3. Copy each list's ID — open a list, add `.json` to the Trello URL in your browser to find IDs, or use the Trello API:
+3. Create one **Failed** list shared across all agents
+4. Copy each list's ID — open a list, add `.json` to the Trello URL in your browser to find IDs, or use the Trello API:
    ```
    curl "https://api.trello.com/1/boards/{board_id}/lists?key={key}&token={token}"
    ```
-4. Copy the **board ID** (visible in the board URL: `trello.com/b/{board_id}/...`)
+5. Copy the **board ID** (visible in the board URL: `trello.com/b/{board_id}/...`)
 
 ### 4. Clone and Install
 
@@ -71,6 +114,7 @@ Fill in `.env` with your secrets:
 
 ```bash
 TRELLO_API_KEY=your_trello_api_key
+TRELLO_API_SECRET=your_trello_api_secret
 TRELLO_TOKEN=your_trello_token
 ANTHROPIC_API_KEY=sk-ant-...
 TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
@@ -87,7 +131,11 @@ GITHUB_TOKEN=ghp_...
 
 ### 6. Configure Agents
 
-Edit `config.json` with your Trello list IDs, repos, and agent system prompts:
+Edit `config.json` with your Trello list IDs, repos, and agent definitions. Here are two examples:
+
+#### Simple config — one coder, one orchestrator
+
+The minimal setup: an orchestrator that talks to you via Telegram and one worker that writes code.
 
 ```json
 {
@@ -95,44 +143,97 @@ Edit `config.json` with your Trello list IDs, repos, and agent system prompts:
     "api": {
       "type": "worker",
       "lists": {
-        "todo": "paste_trello_list_id",
-        "doing": "paste_trello_list_id",
-        "done": "paste_trello_list_id"
+        "todo": "6830abc123def456abc12301",
+        "doing": "6830abc123def456abc12302",
+        "done": "6830abc123def456abc12303"
       },
       "repo": "git@github.com:you/your-api.git",
       "branch_prefix": "agent/api",
+      "base_branch": "main",
       "system_prompt": "You are a FastAPI backend developer. Follow existing patterns in the codebase."
-    },
-    "frontend": {
-      "type": "worker",
-      "lists": {
-        "todo": "paste_trello_list_id",
-        "doing": "paste_trello_list_id",
-        "done": "paste_trello_list_id"
-      },
-      "repo": "git@github.com:you/your-frontend.git",
-      "branch_prefix": "agent/frontend",
-      "system_prompt": "You are a frontend developer. Use the existing component library."
     },
     "orchestrator": {
       "type": "orchestrator",
-      "board_id": "paste_trello_board_id",
+      "board_id": "6830abc123def456abc12300",
+      "failed_list_id": "6830abc123def456abc12304",
       "repos": [
-        "git@github.com:you/your-api.git",
-        "git@github.com:you/your-frontend.git"
+        "git@github.com:you/your-api.git"
       ],
+      "base_branch": "main",
       "system_prompt": "You are an engineering lead. Break features into clear tasks for worker agents."
     }
   }
 }
 ```
 
-**Key points:**
-- Each worker gets **one repo** — it clones, branches, and pushes to it automatically
-- The orchestrator gets **all repos** as read-only context so it can plan across the full codebase
-- `branch_prefix` controls branch names: `agent/api/card-abc123`
-- `system_prompt` tells the Claude agent its role and conventions
-- You can have as many workers as you want — one per repo, or multiple workers on the same repo
+This is the "classic" Karavan setup. The worker uses the defaults (`repo_access: "write"`, `output_mode: "pr"`, full tool list), so you don't need to specify them. You send a message in Telegram, the orchestrator creates a card, the worker writes code and opens a PR.
+
+#### Advanced config — mixed worker types
+
+A richer setup with specialized agents: a coder, a reviewer, and a planner.
+
+```json
+{
+  "agents": {
+    "api": {
+      "type": "worker",
+      "lists": {
+        "todo": "6830abc123def456abc12301",
+        "doing": "6830abc123def456abc12302",
+        "done": "6830abc123def456abc12303"
+      },
+      "repo": "git@github.com:you/your-api.git",
+      "branch_prefix": "agent/api",
+      "base_branch": "main",
+      "system_prompt": "You are a FastAPI backend developer. Follow existing patterns in the codebase."
+    },
+    "reviewer": {
+      "type": "worker",
+      "repo_access": "read",
+      "output_mode": "comment",
+      "allowed_tools": ["Read", "Glob", "Grep"],
+      "lists": {
+        "todo": "6830abc123def456abc12304",
+        "doing": "6830abc123def456abc12305",
+        "done": "6830abc123def456abc12306"
+      },
+      "repo": "git@github.com:you/your-api.git",
+      "base_branch": "main",
+      "system_prompt": "You are a senior code reviewer. Read the codebase, analyze the task, and provide detailed feedback as your response. Focus on correctness, edge cases, and adherence to existing patterns."
+    },
+    "planner": {
+      "type": "worker",
+      "repo_access": "none",
+      "output_mode": "cards",
+      "allowed_tools": ["list_workers", "create_trello_card", "get_card_status", "get_worker_cards"],
+      "lists": {
+        "todo": "6830abc123def456abc12307",
+        "doing": "6830abc123def456abc12308",
+        "done": "6830abc123def456abc12309"
+      },
+      "system_prompt": "You are a technical planner. Break down high-level ideas into concrete, actionable tasks. Use list_workers to find available agents, then create_trello_card to assign work. Follow the card schema format with ## Task, ## Context, and ## Acceptance Criteria sections."
+    },
+    "orchestrator": {
+      "type": "orchestrator",
+      "board_id": "6830abc123def456abc12300",
+      "failed_list_id": "6830abc123def456abc12310",
+      "repos": [
+        "git@github.com:you/your-api.git"
+      ],
+      "base_branch": "main",
+      "system_prompt": "You are an engineering lead. You have three workers: 'api' writes code and opens PRs, 'reviewer' analyzes code and posts feedback as comments, and 'planner' breaks ideas into sub-tasks. Route work to the right agent."
+    }
+  }
+}
+```
+
+In this setup:
+- **api** — the coder. Clones the repo, writes code, opens PRs. Uses the default config axes.
+- **reviewer** — read-only access to the repo. Reads code and posts its analysis as a Trello card comment. Cannot modify files.
+- **planner** — no repo at all. Uses MCP tools to discover workers and create Trello cards for them. Pure reasoning agent.
+- **orchestrator** — routes work to the right agent based on the task.
+
+The orchestrator can chain them: send a vague idea to the planner, the planner creates detailed cards for the coder, and after the coder finishes, the orchestrator sends a review card to the reviewer.
 
 ### 7. Set Up HTTPS
 
@@ -170,13 +271,14 @@ The orchestrator will:
 1. Read the relevant repos for context
 2. Propose a plan
 3. On your approval, create Trello cards in worker `todo` lists
-4. Workers pick up cards, write code, push branches, and open PRs
+4. Workers pick up cards, execute them (write code, analyze, plan, etc.)
 5. Results get reported back to you in Telegram
 
 ## How It Works
 
 - **Trello is the message bus.** Cards move between lists (`todo` → `doing` → `done`) as agents process them.
-- **Workers are stateless.** Each card is a self-contained task. The agent clones fresh, branches, does the work, pushes, and opens a PR.
+- **Workers are stateless.** Each card is a self-contained task. The agent picks it up, executes based on its config, and moves it to done.
+- **Workers are composable.** The same `WorkerAgent` class handles coders, reviewers, planners, and more — behavior is driven by config, not code.
 - **The orchestrator has memory.** It maintains a multi-turn conversation with you via Telegram and has read access to all repos for planning context.
 - **Webhooks drive everything.** Trello notifies Karavan when cards move. Telegram notifies Karavan when you send a message. No polling.
 

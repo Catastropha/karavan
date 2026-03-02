@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-**Karavan** is an open-source framework that turns Trello boards into a communication protocol between AI coding agents powered by the Claude Agent SDK.
+**Karavan** is an open-source framework that turns Trello boards into a communication protocol between AI agents powered by the Claude Agent SDK.
 
-One sentence: You talk to an orchestrator via Telegram, it breaks work into Trello cards, worker agents pick them up, write code, push branches, and open PRs — autonomously.
+One sentence: You talk to an orchestrator via Telegram, it breaks work into Trello cards, worker agents pick them up and execute them — writing code, analyzing repos, creating sub-tasks, or refining specs — autonomously.
 
 ```
 You (Telegram) ←→ Orchestrator Agent
@@ -61,13 +61,51 @@ You (Telegram) ←→ Orchestrator Agent
 - Watches its own `todo` list via a list-level Trello webhook
 - Deduplicates cards via an in-memory `_processed_cards` set — skips cards already being worked on
 - Picks up a card → moves to `doing`
-- Uses `query()` (one-shot, stateless) scoped to its cloned repo directory via `cwd`, with a rich prompt template including repo/branch context, explicit rules (no git commands, write code don't explain), and completion instructions
-- Validates agent output: if no code changes produced, comments failure on card and moves to `failed` list instead of creating an empty PR
-- Commits to a branch, pushes, opens PR via GitHub API
-- Comments PR link and cost (`$X.XXXX`) on the Trello card
+- Uses `query()` (one-shot, stateless) with a rich prompt template built from the card description and config axes
+- Behavior is composable via three orthogonal config axes (see **Configurable Agent Behaviors** below)
 - Sends real-time progress updates to Telegram via edit-in-place messages (tool use summaries every 10s)
 - Moves card to `done`
 - On failure: tracks retry count via `[karavan:fail]` comment prefix, retries up to `MAX_RETRIES=3`, then moves to `failed` list
+
+### Configurable Agent Behaviors
+
+Workers are not hardcoded to one lifecycle. Three orthogonal config axes make behavior composable:
+
+**1. `repo_access`** — does the agent need a repository?
+
+| Mode | Git operations | SDK config | Use case |
+|------|---------------|------------|----------|
+| `write` | clone, pull, branch, commit, push | `cwd` = repo dir | Coder — writes code, opens PRs |
+| `read` | clone, pull (no branch/commit/push) | `add_dirs` = [repo dir] | Reviewer — reads code for context |
+| `none` | nothing | neither | Planner — pure reasoning, no repo |
+
+**2. `output_mode`** — what does the agent produce when it finishes a card?
+
+| Mode | What happens on completion |
+|------|---------------------------|
+| `pr` | Validate diff → commit → push → open GitHub PR → comment PR link on card |
+| `comment` | Post agent's text response as a Trello comment on the card |
+| `cards` | Agent creates new Trello cards via MCP tools during execution |
+| `update` | Rewrite the card's description with the agent's text output |
+
+**3. `allowed_tools`** — explicit list of SDK tools available to the agent
+
+| Profile | Tools | Use case |
+|---------|-------|----------|
+| Full coding | `["Read", "Write", "Edit", "Bash", "Glob", "Grep"]` | Default — code workers |
+| Read-only | `["Read", "Glob", "Grep"]` | Reviewers, analysts |
+| MCP-only | `["list_workers", "create_trello_card", ...]` | Planners, card creators |
+
+**Config validation rules:**
+- `repo_access: "write"` requires non-empty `repo` and `branch_prefix`
+- `output_mode: "pr"` requires `repo_access: "write"`
+- All three fields have backward-compatible defaults (`write`, `pr`, full tool list) — existing configs work unchanged
+
+**Worker execution stages** (`_execute_card` delegates to these based on config):
+1. `_setup_repo(branch_name)` — conditional on `repo_access`: clone+pull+branch (write), clone+pull (read), or skip (none)
+2. `_build_prompt(card, branch_name)` — dynamic prompt with mode-specific instructions, repo context, and rules
+3. `_run_sdk(card, branch_name, tracker)` — builds `ClaudeAgentOptions` dynamically: `cwd`/`add_dirs`/neither, tools from config, MCP server for `cards` mode
+4. `_deliver_output(card, card_id, branch_name, result_text, cost, tracker)` — dispatches to mode-specific delivery (PR, comment, cards summary, or description update)
 
 ### Event Flow
 
@@ -82,17 +120,17 @@ You (Telegram) ←→ Orchestrator Agent
    a. Checks dedup set — skips if card already in progress
    b. Moves card to doing
    c. Sends initial progress message to Telegram (edit-in-place)
-   d. git pull origin {base_branch}
-   e. git checkout -B {branch_prefix}/card-{id} (idempotent, handles retries)
-   f. Claude Agent SDK query() with rich prompt (repo context, rules, card description)
-   g. Streams progress updates to Telegram every 10s (tool use summaries)
-   h. Validates changes — if no diff, comments failure, moves to failed list
-   i. git commit + push
-   j. Opens GitHub PR via API
-   k. Comments PR link + cost on Trello card
-   l. Moves card to done
-   m. On failure: increments retry counter (via comments), retries up to 3x, then moves to failed list
-8. Orchestrator board webhook detects card moved to done → extracts PR link from comments → checks for unblocked dependent cards → notifies user via Telegram with PR URL
+   d. _setup_repo(): [if repo_access != "none"] clone/pull; [if "write"] create branch
+   e. _run_sdk(): Claude Agent SDK query() with config-driven prompt, tools, and MCP server
+   f. Streams progress updates to Telegram every 10s (tool use summaries)
+   g. _deliver_output(): based on output_mode:
+      - pr: validate diff → commit → push → PR → comment link
+      - comment: post analysis as Trello comment
+      - cards: post summary (cards created by MCP tools during SDK execution)
+      - update: rewrite card description
+   h. Move card to done
+   i. On failure: increments retry counter (via comments), retries up to 3x, then moves to failed list
+8. Orchestrator board webhook detects card moved to done → extracts PR link from comments (if any) → checks for unblocked dependent cards → notifies user via Telegram
 ```
 
 ### Webhook Strategy
@@ -167,39 +205,57 @@ TRELLO_API_SECRET=            # Trello OAuth secret, used for webhook HMAC-SHA1 
 
 ### Topology — `config.json` (safe to commit, no secrets)
 
+Worker config fields:
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `type` | yes | — | Must be `"worker"` |
+| `lists` | yes | — | `todo`, `doing`, `done` Trello list IDs |
+| `repo` | when `repo_access` is `write` | `""` | Git repo SSH URL |
+| `branch_prefix` | when `repo_access` is `write` | `""` | Branch prefix for this agent |
+| `base_branch` | no | `"main"` | Base branch to pull and target PRs against |
+| `system_prompt` | no | `""` | System prompt for Claude |
+| `repo_access` | no | `"write"` | `"write"`, `"read"`, or `"none"` |
+| `output_mode` | no | `"pr"` | `"pr"`, `"comment"`, `"cards"`, or `"update"` |
+| `allowed_tools` | no | `["Read","Write","Edit","Bash","Glob","Grep"]` | SDK tools available to the agent |
+
+Example with different worker types:
+
 ```json
 {
   "agents": {
     "api": {
       "type": "worker",
-      "lists": {
-        "todo": "trello_list_id",
-        "doing": "trello_list_id",
-        "done": "trello_list_id"
-      },
+      "lists": { "todo": "...", "doing": "...", "done": "..." },
       "repo": "git@github.com:user/myproject-api.git",
       "branch_prefix": "agent/api",
       "base_branch": "main",
-      "system_prompt": "You are a FastAPI backend developer. Follow existing patterns in the codebase."
+      "system_prompt": "You are a FastAPI backend developer."
     },
-    "static": {
+    "reviewer": {
       "type": "worker",
-      "lists": {
-        "todo": "trello_list_id",
-        "doing": "trello_list_id",
-        "done": "trello_list_id"
-      },
-      "repo": "git@github.com:user/myproject-static.git",
-      "branch_prefix": "agent/static",
+      "repo_access": "read",
+      "output_mode": "comment",
+      "allowed_tools": ["Read", "Glob", "Grep"],
+      "lists": { "todo": "...", "doing": "...", "done": "..." },
+      "repo": "git@github.com:user/myproject-api.git",
       "base_branch": "main",
-      "system_prompt": "You are a frontend developer. Use the existing component library."
+      "system_prompt": "You are a code reviewer. Analyze the code and provide detailed feedback."
+    },
+    "planner": {
+      "type": "worker",
+      "repo_access": "none",
+      "output_mode": "cards",
+      "allowed_tools": ["list_workers", "create_trello_card", "get_card_status", "get_worker_cards"],
+      "lists": { "todo": "...", "doing": "...", "done": "..." },
+      "system_prompt": "You break down ideas into concrete, actionable tasks for worker agents."
     },
     "orchestrator": {
       "type": "orchestrator",
       "board_id": "trello_board_id",
+      "failed_list_id": "trello_list_id",
       "repos": [
-        "git@github.com:user/myproject-api.git",
-        "git@github.com:user/myproject-static.git"
+        "git@github.com:user/myproject-api.git"
       ],
       "system_prompt": "You are an engineering lead. Break features into clear tasks for worker agents."
     }
@@ -243,6 +299,11 @@ TRELLO_API_SECRET=            # Trello OAuth secret, used for webhook HMAC-SHA1 
 - Rich health endpoint (per-agent status, queue depth, cost summaries)
 - Improved MarkdownV2 escaping (code blocks, inline code, links, bold)
 - Chat ID tracking from conversations for correct Telegram notifications in groups
+- Configurable agent behaviors via `repo_access`, `output_mode`, and `allowed_tools` config axes
+- Non-coding worker types: reviewers (read+comment), planners (none+cards), improvers (read+update)
+- Worker MCP server (`build_worker_mcp_server`) for agents with `output_mode: "cards"`
+- `update_card_description()` Trello CRUD for agents with `output_mode: "update"`
+- Worker `_execute_card()` decomposed into conditional stages (`_setup_repo`, `_build_prompt`, `_run_sdk`, `_deliver_output`)
 
 ### v0.3 — Polish
 
@@ -265,14 +326,14 @@ TRELLO_API_SECRET=            # Trello OAuth secret, used for webhook HMAC-SHA1 
 ### `trello` app
 - Trello domain models (card schemas, webhook payloads) and Trello-specific CRUD operations
 - The raw httpx client for Trello lives in `core/resource.py` as a shared singleton (infrastructure, not domain)
-- CRUD wraps the shared client with domain methods: get_card, get_list_cards, create_card, move_card, add_comment, add_label, register_webhook, delete_webhook
+- CRUD wraps the shared client with domain methods: get_card, get_list_cards, create_card, move_card, add_comment, add_label, update_card_description, register_webhook, delete_webhook
 - Webhook payload parsing and validation via Pydantic models
 
 ### `agent` app
 - BaseAgent class: async queue, lifecycle (start/stop), card pickup logic, per-agent status tracking (running, queue depth, last activity, cards processed)
-- WorkerAgent: inherits BaseAgent, uses `query()` (one-shot) scoped to a repo via `cwd`, handles the full card lifecycle (todo → doing → done), validates agent output, retries with counter (max 3), deduplicates via `_processed_cards` set, sends real-time progress to Telegram
+- WorkerAgent: inherits BaseAgent, uses `query()` (one-shot), delegates to four stage methods (`_setup_repo`, `_build_prompt`, `_run_sdk`, `_deliver_output`) driven by config axes (`repo_access`, `output_mode`, `allowed_tools`). Handles the full card lifecycle (todo → doing → done), retries with counter (max 3), deduplicates via `_processed_cards` set, sends real-time progress to Telegram
 - OrchestratorAgent: inherits BaseAgent, uses `ClaudeSDKClient` (multi-turn) for persistent conversation, connected to Telegram, creates/monitors cards via MCP tools, handles dependency tracking (parses `## Dependencies`, unblocks cards), extracts PR links from comments, tracks `chat_id` from conversations
-- `tools.py`: MCP tool definitions (`create_trello_card`, `list_workers`, `get_card_status`, `get_worker_cards`) exposed to orchestrator SDK via `create_sdk_mcp_server`
+- `tools.py`: MCP tool definitions (`create_trello_card`, `list_workers`, `get_card_status`, `get_worker_cards`) exposed via `create_sdk_mcp_server`; `build_orchestrator_mcp_server()` for orchestrator, `build_worker_mcp_server()` for workers with `output_mode: "cards"`
 - Agent registry: loads agents from config.json, starts them on app lifespan
 
 ### `git_manager` app
@@ -316,25 +377,31 @@ TRELLO_API_SECRET=            # Trello OAuth secret, used for webhook HMAC-SHA1 
 
 **Package:** `claude-agent-sdk` — `from claude_agent_sdk import query, ClaudeSDKClient, ClaudeAgentOptions, ...`
 
-**Workers use `query()` (one-shot, stateless):**
+**Workers use `query()` (one-shot, stateless) with config-driven options:**
 ```python
 from claude_agent_sdk import query, ClaudeAgentOptions
 
-async for message in query(
-    prompt=card_description,
-    options=ClaudeAgentOptions(
-        cwd="/path/to/repos/agent_name",
-        allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
-        system_prompt={
-            "type": "preset",
-            "preset": "claude_code",
-            "append": agent_system_prompt_from_config,
-        },
-        permission_mode="bypassPermissions",
-        setting_sources=["project"],  # loads CLAUDE.md from the repo
-        max_turns=50,
-    ),
-):
+# SDK options are built dynamically in _run_sdk() based on config axes:
+# - cwd: set when repo_access == "write"
+# - add_dirs: set when repo_access == "read"
+# - allowed_tools: from config.allowed_tools (+ MCP tool names for "cards" mode)
+# - mcp_servers: added when output_mode == "cards" (via build_worker_mcp_server())
+
+sdk_kwargs = {
+    "allowed_tools": config.allowed_tools,  # from config, not hardcoded
+    "system_prompt": {"type": "preset", "preset": "claude_code", "append": config.system_prompt},
+    "permission_mode": "bypassPermissions",
+    "setting_sources": ["project"],
+    "max_turns": 50,
+}
+if config.repo_access == "write":
+    sdk_kwargs["cwd"] = str(repo_dir)
+elif config.repo_access == "read":
+    sdk_kwargs["add_dirs"] = [str(repo_dir)]
+if config.output_mode == "cards":
+    sdk_kwargs["mcp_servers"] = {"karavan": build_worker_mcp_server()}
+
+async for message in query(prompt=prompt, options=ClaudeAgentOptions(**sdk_kwargs)):
     # process messages, collect ResultMessage at end
 ```
 
