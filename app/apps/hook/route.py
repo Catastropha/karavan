@@ -7,6 +7,8 @@ from fastapi import APIRouter, Request, Response
 from app.apps.hook.model.output import HealthGetOut, WebhookPostOut
 from app.apps.trello.model.input import TrelloWebhookPayload
 from app.common.cost import cost_tracker
+from app.core.config import settings
+from app.core.security import verify_trello_webhook
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,19 @@ async def trello_webhook_verify(agent_name: str) -> Response:
 @router.post("/webhook/{agent_name}", response_model=WebhookPostOut)
 async def trello_webhook(agent_name: str, request: Request) -> WebhookPostOut:
     """Receive Trello webhook events and route to the appropriate agent."""
+    # Verify Trello webhook signature
+    signature = request.headers.get("x-trello-webhook", "")
+    raw_body = await request.body()
+    callback_url = f"{settings.webhook_base_url}/webhook/{agent_name}"
+    if not signature or not verify_trello_webhook(
+        body=raw_body,
+        callback_url=callback_url,
+        api_secret=settings.trello_api_secret,
+        signature=signature,
+    ):
+        logger.warning("Invalid Trello webhook signature for %s", agent_name)
+        return WebhookPostOut()
+
     body = await request.json()
     try:
         payload = TrelloWebhookPayload(**body)

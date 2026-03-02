@@ -63,6 +63,7 @@ class Settings(BaseSettings):
 
     # Trello
     trello_api_key: Annotated[str, Field(min_length=1, description="Trello API key")]
+    trello_api_secret: Annotated[str, Field(min_length=1, description="Trello API secret (OAuth secret) for webhook signature verification")]
     trello_token: Annotated[str, Field(min_length=1, description="Trello API token")]
 
     # Anthropic

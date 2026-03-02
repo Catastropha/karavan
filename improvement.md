@@ -103,7 +103,7 @@ Weaknesses and improvements identified from a full codebase analysis. Work throu
 - **Fix:** Send periodic Telegram updates or Trello card comments during execution (e.g., "Agent started working on card...", progress from SDK stream messages).
 
 ### 15. No Trello webhook payload verification
-- **Status:** TODO
+- **Status:** DONE
 - **File(s):** `app/apps/hook/route.py:30-71`
 - **Problem:** Any POST to `/webhook/{agent_name}` with valid-looking JSON is accepted. No source verification.
 - **Fix:** Verify the webhook source using the `x-trello-webhook` header or by checking that the callback URL matches what was registered.
