@@ -33,12 +33,14 @@ async def send_message(chat_id: int, text: str, parse_mode: str | None = "Markdo
 
 
 async def send_typing_action(chat_id: int) -> None:
-    """Send a typing indicator to a Telegram chat."""
-    resp = await res.telegram_client.post(
-        "sendChatAction",
-        json={"chat_id": chat_id, "action": "typing"},
-    )
-    resp.raise_for_status()
+    """Send a typing indicator to a Telegram chat. Best-effort — failures are ignored."""
+    try:
+        await res.telegram_client.post(
+            "sendChatAction",
+            json={"chat_id": chat_id, "action": "typing"},
+        )
+    except Exception:
+        logger.debug("Failed to send typing action to chat %d", chat_id, exc_info=True)
 
 
 async def register_telegram_webhook() -> dict:
@@ -49,5 +51,5 @@ async def register_telegram_webhook() -> dict:
         json={"url": url, "allowed_updates": ["message"]},
     )
     resp.raise_for_status()
-    logger.info("Registered Telegram webhook at %s", url)
+    logger.info("Registered Telegram webhook at %s/telegram/***", settings.webhook_base_url)
     return resp.json()

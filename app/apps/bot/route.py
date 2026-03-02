@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Request
 
 from app.apps.bot.model.input import TelegramUpdate
 from app.apps.bot.model.output import HookTelegramPostOut
@@ -35,8 +35,12 @@ async def telegram_webhook(secret: str, request: Request) -> HookTelegramPostOut
         logger.warning("Invalid Telegram webhook secret")
         return HookTelegramPostOut()
 
-    body = await request.json()
-    update = TelegramUpdate(**body)
+    try:
+        body = await request.json()
+        update = TelegramUpdate(**body)
+    except Exception:
+        logger.warning("Failed to parse Telegram update payload")
+        return HookTelegramPostOut()
 
     if update.message and update.message.text and update.message.from_:
         user_id = update.message.from_.id
