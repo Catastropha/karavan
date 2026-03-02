@@ -97,7 +97,7 @@ Weaknesses and improvements identified from a full codebase analysis. Work throu
 - **Fix:** Include per-agent status: running (bool), queue depth, last activity timestamp, cards processed count.
 
 ### 14. No progress feedback during long worker tasks
-- **Status:** TODO
+- **Status:** DONE
 - **File(s):** `app/apps/agent/worker.py`
 - **Problem:** Worker tasks can take several minutes. The user gets no feedback between "card picked up" and the done notification (or silence on failure).
 - **Fix:** Send periodic Telegram updates or Trello card comments during execution (e.g., "Agent started working on card...", progress from SDK stream messages).

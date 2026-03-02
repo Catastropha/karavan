@@ -13,6 +13,7 @@ from app.apps.git_manager.model.input import PRCreateIn
 from app.apps.trello.crud.read import get_card, get_card_actions
 from app.apps.trello.crud.update import add_comment, move_card
 from app.common.cost import cost_tracker
+from app.common.progress import ProgressTracker
 from app.core.config import BASE_DIR, WorkerAgentConfig, settings
 
 logger = logging.getLogger(__name__)
@@ -95,10 +96,12 @@ class WorkerAgent(BaseAgent):
         branch_name = f"{self.config.branch_prefix}/card-{card_id_short}"
 
         logger.info("Worker %s picking up card '%s' (%s)", self.name, card.name, card_id)
+        tracker = ProgressTracker(worker_name=self.name, card_name=card.name)
 
         try:
             # 1. Move to doing
             await move_card(card_id, self.config.lists.doing)
+            await tracker.start()
 
             # 2. Ensure repo is cloned, pull dev
             await clone_repo(self.config.repo, self.repo_dir)
@@ -150,6 +153,7 @@ class WorkerAgent(BaseAgent):
                     max_turns=50,
                 ),
             ):
+                tracker.record_activity(message)
                 if hasattr(message, "total_cost_usd"):
                     execution_cost = message.total_cost_usd
                     execution_usage = message.usage
@@ -166,6 +170,7 @@ class WorkerAgent(BaseAgent):
                 logger.warning("Worker %s: agent produced no changes for card '%s'", self.name, card.name)
                 await add_comment(card_id, f"{FAIL_PREFIX} Agent completed but produced no code changes.")
                 await move_card(card_id, settings.failed_list_id)
+                await tracker.finish(success=False, error="No code changes produced")
                 return
 
             # 6. Create PR
@@ -186,10 +191,12 @@ class WorkerAgent(BaseAgent):
 
             # 8. Move to done
             await move_card(card_id, self.config.lists.done)
+            await tracker.finish(success=True, pr_url=pr.html_url, cost_usd=execution_cost)
             logger.info("Worker %s completed card '%s' -> PR %s", self.name, card.name, pr.html_url)
 
         except Exception:
             logger.exception("Worker %s failed on card '%s'", self.name, card.name)
+            await tracker.finish(success=False, error="Agent execution failed")
             try:
                 failure_count = await self._count_failures(card_id) + 1
                 attempt_msg = f"Attempt {failure_count}/{MAX_RETRIES} failed"
