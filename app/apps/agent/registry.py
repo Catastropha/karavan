@@ -1,6 +1,7 @@
 """AgentRegistry — loads agent configs, instantiates agents, provides lookup."""
 
 import logging
+from typing import Any
 
 from app.apps.agent.base import BaseAgent
 from app.apps.agent.orchestrator import OrchestratorAgent
@@ -49,6 +50,10 @@ class AgentRegistry:
             if isinstance(v, OrchestratorAgent):
                 return v
         return None
+
+    def get_all_status(self) -> dict[str, dict[str, Any]]:
+        """Return status for all registered agents."""
+        return {name: agent.get_status() for name, agent in self._agents.items()}
 
     async def start_all(self) -> None:
         """Start all agents."""

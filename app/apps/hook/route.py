@@ -74,8 +74,10 @@ async def trello_webhook(agent_name: str, request: Request) -> WebhookPostOut:
 
 @router.get("/health")
 async def health_check() -> HealthGetOut:
-    """Health check endpoint with cost tracking data."""
+    """Health check endpoint with agent status and cost tracking data."""
+    agents = _agent_registry.get_all_status() if _agent_registry else {}
     return HealthGetOut(
+        agents=agents,
         costs_by_agent=cost_tracker.get_summary(),
         costs_total=cost_tracker.get_totals(),
     )

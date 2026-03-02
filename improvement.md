@@ -91,7 +91,7 @@ Weaknesses and improvements identified from a full codebase analysis. Work throu
 ## P3 — Nice to Have (Operational polish)
 
 ### 13. Health endpoint lacks agent status
-- **Status:** TODO
+- **Status:** DONE
 - **File(s):** `app/apps/hook/route.py:74-77`
 - **Problem:** `/health` returns `{"status": "ok"}` regardless of whether agents are running, queues are backed up, or the last activity was hours ago.
 - **Fix:** Include per-agent status: running (bool), queue depth, last activity timestamp, cards processed count.

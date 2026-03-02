@@ -2,7 +2,9 @@
 
 import asyncio
 import logging
+import time
 from abc import ABC, abstractmethod
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +21,8 @@ class BaseAgent(ABC):
         self.queue: asyncio.Queue = asyncio.Queue()
         self._task: asyncio.Task | None = None
         self._running = False
+        self._last_activity_at: float = 0.0
+        self._cards_processed: int = 0
 
     @property
     def running(self) -> bool:
@@ -58,11 +62,22 @@ class BaseAgent(ABC):
                 break
 
             try:
+                self._last_activity_at = time.time()
                 await self._process(item)
+                self._cards_processed += 1
             except Exception:
                 logger.exception("Agent %s failed to process item: %s", self.name, item)
 
         logger.info("Agent %s run loop ended", self.name)
+
+    def get_status(self) -> dict[str, Any]:
+        """Return agent status for the health endpoint."""
+        return {
+            "running": self._running,
+            "queue_depth": self.queue.qsize(),
+            "last_activity_at": self._last_activity_at,
+            "cards_processed": self._cards_processed,
+        }
 
     @abstractmethod
     async def _process(self, item: object) -> None:
