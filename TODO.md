@@ -48,7 +48,7 @@ The method handles `pr`, `comment`, `cards`, `update` via elif chains but has no
 
 ## 6. Add graceful shutdown for in-flight cards
 
-**Status:** Open
+**Status:** Done
 
 `stop()` cancels the task but doesn't handle in-progress cards. If a worker is mid-execution when shutdown fires, the card stays in `doing` forever. The shutdown path should move any in-progress card back to `todo` (and discard it from `_processed_cards`) so it gets retried on restart.
 

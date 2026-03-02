@@ -570,6 +570,69 @@ class TestRetryLogic:
         assert last_update == (("abc123def456789012345678",), {"id_list": "failed_list_id"})
 
 
+# --- Graceful shutdown ---
+
+
+class TestGracefulShutdown:
+    async def test_stop_moves_inflight_card_to_todo(self, worker_agent):
+        """On stop, an in-flight card is moved back to todo."""
+        worker_agent._current_card_id = "card_inflight"
+        worker_agent._processed_cards.add("card_inflight")
+
+        with patch("app.apps.agent.worker.update_card", new_callable=AsyncMock) as mock_update:
+            await worker_agent.stop()
+
+        mock_update.assert_awaited_once_with("card_inflight", id_list="todo_list_id")
+        assert "card_inflight" not in worker_agent._processed_cards
+
+    async def test_stop_no_inflight_card_skips_cleanup(self, worker_agent):
+        """On stop with no in-flight card, no Trello calls are made."""
+        assert worker_agent._current_card_id is None
+
+        with patch("app.apps.agent.worker.update_card", new_callable=AsyncMock) as mock_update:
+            await worker_agent.stop()
+
+        mock_update.assert_not_awaited()
+
+    async def test_stop_handles_trello_error_gracefully(self, worker_agent):
+        """If moving card back to todo fails, stop still completes."""
+        worker_agent._current_card_id = "card_inflight"
+
+        with patch("app.apps.agent.worker.update_card", new_callable=AsyncMock, side_effect=RuntimeError("Trello down")):
+            await worker_agent.stop()  # Should not raise
+
+        assert worker_agent._running is False
+
+    async def test_current_card_id_cleared_after_execute(self, worker_agent):
+        """_current_card_id is cleared after _execute_card completes."""
+        card = make_card()
+        with patch("app.apps.agent.worker.get_card", new_callable=AsyncMock, return_value=card), \
+             patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
+             patch.object(worker_agent, "_setup_repo", new_callable=AsyncMock), \
+             patch.object(worker_agent, "_run_sdk", new_callable=AsyncMock, return_value=("result", 0.01, {})), \
+             patch.object(worker_agent, "_deliver_output", new_callable=AsyncMock, return_value=True), \
+             patch("app.apps.agent.worker.cost_tracker"), \
+             patch("app.apps.agent.worker.ProgressTracker") as mock_pt:
+            mock_pt.return_value = AsyncMock()
+            await worker_agent._execute_card("abc123def456789012345678")
+
+        assert worker_agent._current_card_id is None
+
+    async def test_current_card_id_cleared_after_failure(self, worker_agent):
+        """_current_card_id is cleared even when _execute_card fails."""
+        card = make_card()
+        with patch("app.apps.agent.worker.get_card", new_callable=AsyncMock, return_value=card), \
+             patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
+             patch.object(worker_agent, "_setup_repo", new_callable=AsyncMock, side_effect=RuntimeError("boom")), \
+             patch("app.apps.agent.worker.get_card_actions", new_callable=AsyncMock, return_value=[]), \
+             patch("app.apps.agent.worker.add_comment", new_callable=AsyncMock), \
+             patch("app.apps.agent.worker.ProgressTracker") as mock_pt:
+            mock_pt.return_value = AsyncMock()
+            await worker_agent._execute_card("abc123def456789012345678")
+
+        assert worker_agent._current_card_id is None
+
+
 # --- Helpers ---
 
 

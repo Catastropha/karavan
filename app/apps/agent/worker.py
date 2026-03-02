@@ -93,12 +93,29 @@ class WorkerAgent(BaseAgent):
         self.board = board
         self.repo_dir = BASE_DIR / "repos" / name
         self._processed_cards: set[str] = set()
+        self._current_card_id: str | None = None
 
         if config.repo_access in ("write", "read") and config.repo:
             self.owner, self.repo_name = _parse_repo_url(config.repo)
         else:
             self.owner = ""
             self.repo_name = ""
+
+    async def stop(self) -> None:
+        """Stop the agent, moving any in-flight card back to todo for retry on restart."""
+        card_id = self._current_card_id
+        await super().stop()
+
+        if card_id:
+            logger.info("Worker %s: moving in-flight card %s back to todo on shutdown", self.name, card_id)
+            try:
+                await update_card(card_id, id_list=self.config.lists.todo)
+                self._processed_cards.discard(card_id)
+            except Exception:
+                logger.exception(
+                    "Worker %s: failed to move in-flight card %s back to todo",
+                    self.name, card_id,
+                )
 
     def should_process_webhook(self, list_id: str) -> bool:
         """Process webhooks when a card enters this worker's todo list."""
@@ -299,6 +316,7 @@ class WorkerAgent(BaseAgent):
             return
 
         self._processed_cards.add(card_id)
+        self._current_card_id = card_id
         card_id_short = card_id[-6:]
         branch_name = f"{self.config.branch_prefix}/card-{card_id_short}" if self.config.branch_prefix else ""
 
@@ -356,3 +374,5 @@ class WorkerAgent(BaseAgent):
                     await update_card(card_id, id_list=self.config.lists.todo)
             except Exception:
                 logger.exception("Failed to handle failure for card %s", card_id)
+        finally:
+            self._current_card_id = None
