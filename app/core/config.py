@@ -69,7 +69,7 @@ class BoardConfig(BaseModel):
 class OrchestratorAgentConfig(BaseModel):
     """Configuration for the orchestrator agent."""
 
-    repos: Annotated[list[str], Field(min_items=1, description="Git repo SSH URLs for read access")]
+    repos: Annotated[list[str], Field(min_length=1, description="Git repo SSH URLs for read access")]
     base_branch: Annotated[str, Field(default="main", description="Base branch to pull from repos")]
     system_prompt: Annotated[str, Field(default="", description="System prompt for Claude")]
 
