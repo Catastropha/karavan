@@ -58,22 +58,4 @@ async def telegram_webhook(secret: str, request: Request) -> HookTelegramPostOut
         else:
             logger.error("Orchestrator queue not set — dropping message")
 
-    elif update.callback_query:
-        user_id = update.callback_query.from_.id
-        if user_id not in settings.telegram_allowed_user_ids:
-            return HookTelegramPostOut()
-
-        msg = update.callback_query.message
-        bot_msg = BotMessage(
-            chat_id=msg.chat.id if msg else 0,
-            user_id=user_id,
-            username=update.callback_query.from_.first_name,
-            text=update.callback_query.data,
-            message_id=msg.message_id if msg else 0,
-        )
-
-        if _orchestrator_queue is not None:
-            await _orchestrator_queue.put(bot_msg)
-            logger.info("Queued callback from user %d: %s", user_id, bot_msg.text[:50])
-
     return HookTelegramPostOut()

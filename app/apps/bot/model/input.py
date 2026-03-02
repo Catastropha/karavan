@@ -36,22 +36,10 @@ class TelegramMessage(BaseModel):
     model_config = {"extra": "ignore", "populate_by_name": True}
 
 
-class TelegramCallbackQuery(BaseModel):
-    """Telegram inline keyboard callback."""
-
-    id: Annotated[str, Field(description="Callback query ID")]
-    from_: Annotated[TelegramUser, Field(alias="from", description="User who pressed the button")]
-    message: Annotated[TelegramMessage | None, Field(default=None, description="Original message")]
-    data: Annotated[str, Field(default="", description="Callback data")]
-
-    model_config = {"extra": "ignore", "populate_by_name": True}
-
-
 class TelegramUpdate(BaseModel):
     """Telegram webhook update payload."""
 
     update_id: Annotated[int, Field(description="Update ID")]
     message: Annotated[TelegramMessage | None, Field(default=None, description="New message")]
-    callback_query: Annotated[TelegramCallbackQuery | None, Field(default=None, description="Callback query")]
 
     model_config = {"extra": "ignore"}

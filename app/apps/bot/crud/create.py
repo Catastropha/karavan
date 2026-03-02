@@ -10,7 +10,7 @@ from app.core.resource import res
 logger = logging.getLogger(__name__)
 
 
-async def send_message(chat_id: int, text: str, parse_mode: str | None = "MarkdownV2", reply_markup: dict[str, Any] | None = None) -> dict:
+async def send_message(chat_id: int, text: str, parse_mode: str | None = "MarkdownV2") -> dict:
     """Send a message to a Telegram chat.
 
     Falls back to plain text if Telegram rejects the MarkdownV2 formatting.
@@ -21,8 +21,6 @@ async def send_message(chat_id: int, text: str, parse_mode: str | None = "Markdo
     }
     if parse_mode:
         payload["parse_mode"] = parse_mode
-    if reply_markup:
-        payload["reply_markup"] = reply_markup
     resp = await res.telegram_client.post("sendMessage", json=payload)
     if resp.status_code == 400 and parse_mode:
         logger.warning("MarkdownV2 send failed for chat %d, retrying as plain text", chat_id)
@@ -48,18 +46,8 @@ async def register_telegram_webhook() -> dict:
     url = f"{settings.webhook_base_url}/telegram/{settings.telegram_secret}"
     resp = await res.telegram_client.post(
         "setWebhook",
-        json={"url": url, "allowed_updates": ["message", "callback_query"]},
+        json={"url": url, "allowed_updates": ["message"]},
     )
     resp.raise_for_status()
     logger.info("Registered Telegram webhook at %s", url)
-    return resp.json()
-
-
-async def answer_callback_query(callback_query_id: str, text: str = "") -> dict:
-    """Answer a callback query from an inline keyboard."""
-    payload: dict[str, Any] = {"callback_query_id": callback_query_id}
-    if text:
-        payload["text"] = text
-    resp = await res.telegram_client.post("answerCallbackQuery", json=payload)
-    resp.raise_for_status()
     return resp.json()

@@ -108,13 +108,7 @@ Weaknesses and improvements identified from a full codebase analysis. Work throu
 - **Problem:** Any POST to `/webhook/{agent_name}` with valid-looking JSON is accepted. No source verification.
 - **Fix:** Verify the webhook source using the `x-trello-webhook` header or by checking that the callback URL matches what was registered.
 
-### 16. `answer_callback_query` is never called
-- **Status:** TODO
-- **File(s):** `app/apps/bot/crud/create.py`, `app/apps/bot/route.py`
-- **Problem:** `answer_callback_query()` is implemented but never invoked. When a user taps an inline keyboard button, Telegram shows a perpetual loading spinner because the callback is never acknowledged.
-- **Fix:** Call `answer_callback_query(callback_query_id)` in the bot route after processing a `callback_query` event.
-
-### 17. Orchestrator uses `user_id` as `chat_id` for notifications
+### 16. Orchestrator uses `user_id` as `chat_id` for notifications
 - **Status:** TODO
 - **File(s):** `app/apps/agent/orchestrator.py:140`
 - **Problem:** Done-event notifications iterate over `telegram_allowed_user_ids` and use them as `chat_id`. This works for private chats (where user_id == chat_id) but will fail in group chats.

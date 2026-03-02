@@ -364,7 +364,6 @@ async with client:
 - `sendMessage` with `parse_mode=MarkdownV2` for formatted responses
 - MarkdownV2 escaping: split on `**bold**` markers, convert to Telegram's `*bold*`, escape all special chars in the rest
 - `sendChatAction` (typing indicator) while orchestrator is thinking
-- Inline keyboard via `reply_markup` for approve/reject plan confirmation
 
 **Pydantic models (bot app):**
 ```python
