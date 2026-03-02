@@ -209,7 +209,6 @@ Worker config fields:
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `type` | yes | — | Must be `"worker"` |
 | `lists` | yes | — | `todo`, `doing`, `done` Trello list IDs |
 | `repo` | when `repo_access` is `write` | `""` | Git repo SSH URL |
 | `branch_prefix` | when `repo_access` is `write` | `""` | Branch prefix for this agent |
@@ -223,42 +222,49 @@ Example with different worker types:
 
 ```json
 {
-  "agents": {
-    "api": {
-      "type": "worker",
-      "lists": { "todo": "...", "doing": "...", "done": "..." },
-      "repo": "git@github.com:user/myproject-api.git",
-      "branch_prefix": "agent/api",
-      "base_branch": "main",
-      "system_prompt": "You are a FastAPI backend developer."
-    },
-    "reviewer": {
-      "type": "worker",
-      "repo_access": "read",
-      "output_mode": "comment",
-      "allowed_tools": ["Read", "Glob", "Grep"],
-      "lists": { "todo": "...", "doing": "...", "done": "..." },
-      "repo": "git@github.com:user/myproject-api.git",
-      "base_branch": "main",
-      "system_prompt": "You are a code reviewer. Analyze the code and provide detailed feedback."
-    },
-    "planner": {
-      "type": "worker",
-      "repo_access": "none",
-      "output_mode": "cards",
-      "allowed_tools": ["list_workers", "create_trello_card", "get_card_status", "get_worker_cards"],
-      "lists": { "todo": "...", "doing": "...", "done": "..." },
-      "system_prompt": "You break down ideas into concrete, actionable tasks for worker agents."
-    },
-    "orchestrator": {
-      "type": "orchestrator",
+  "boards": {
+    "backend": {
       "board_id": "trello_board_id",
       "failed_list_id": "trello_list_id",
-      "repos": [
-        "git@github.com:user/myproject-api.git"
-      ],
-      "system_prompt": "You are an engineering lead. Break features into clear tasks for worker agents."
+      "workers": {
+        "api": {
+          "lists": { "todo": "...", "doing": "...", "done": "..." },
+          "repo": "git@github.com:user/myproject-api.git",
+          "branch_prefix": "agent/api",
+          "base_branch": "main",
+          "system_prompt": "You are a FastAPI backend developer."
+        },
+        "reviewer": {
+          "repo_access": "read",
+          "output_mode": "comment",
+          "allowed_tools": ["Read", "Glob", "Grep"],
+          "lists": { "todo": "...", "doing": "...", "done": "..." },
+          "repo": "git@github.com:user/myproject-api.git",
+          "base_branch": "main",
+          "system_prompt": "You are a code reviewer. Analyze the code and provide detailed feedback."
+        }
+      }
+    },
+    "planning": {
+      "board_id": "trello_board_id",
+      "failed_list_id": "trello_list_id",
+      "workers": {
+        "planner": {
+          "repo_access": "none",
+          "output_mode": "cards",
+          "allowed_tools": ["list_workers", "create_trello_card", "get_card_status", "get_worker_cards"],
+          "lists": { "todo": "...", "doing": "...", "done": "..." },
+          "system_prompt": "You break down ideas into concrete, actionable tasks for worker agents."
+        }
+      }
     }
+  },
+  "orchestrator": {
+    "repos": [
+      "git@github.com:user/myproject-api.git"
+    ],
+    "base_branch": "main",
+    "system_prompt": "You are an engineering lead. Break features into clear tasks for worker agents."
   }
 }
 ```
@@ -301,15 +307,15 @@ Example with different worker types:
 - Chat ID tracking from conversations for correct Telegram notifications in groups
 - Configurable agent behaviors via `repo_access`, `output_mode`, and `allowed_tools` config axes
 - Non-coding worker types: reviewers (read+comment), planners (none+cards), improvers (read+update)
-- Worker MCP server (`build_worker_mcp_server`) for agents with `output_mode: "cards"`
-- `update_card_description()` Trello CRUD for agents with `output_mode: "update"`
+- Unified MCP server factory (`build_mcp_server(name)`) for both orchestrator and workers with `output_mode: "cards"`
+- `update_card(card_id, desc=...)` Trello CRUD for agents with `output_mode: "update"`
 - Worker `_execute_card()` decomposed into conditional stages (`_setup_repo`, `_build_prompt`, `_run_sdk`, `_deliver_output`)
+- Multi-board support: `boards:` config groups workers under named boards with per-board `board_id` and `failed_list_id`
 
 ### v0.3 — Polish
 
 - Docker + docker-compose
 - Caddy HTTPS setup guide
-- Multiple projects/boards support
 - Card templates
 
 ### v1.0 — Community
@@ -326,14 +332,14 @@ Example with different worker types:
 ### `trello` app
 - Trello domain models (card schemas, webhook payloads) and Trello-specific CRUD operations
 - The raw httpx client for Trello lives in `core/resource.py` as a shared singleton (infrastructure, not domain)
-- CRUD wraps the shared client with domain methods: get_card, get_list_cards, create_card, move_card, add_comment, add_label, update_card_description, register_webhook, delete_webhook
+- CRUD wraps the shared client with domain methods: get_card, get_list_cards, create_card, update_card (moves card and/or updates description), add_comment, register_webhook, delete_webhook
 - Webhook payload parsing and validation via Pydantic models
 
 ### `agent` app
 - BaseAgent class: async queue, lifecycle (start/stop), card pickup logic, per-agent status tracking (running, queue depth, last activity, cards processed)
 - WorkerAgent: inherits BaseAgent, uses `query()` (one-shot), delegates to four stage methods (`_setup_repo`, `_build_prompt`, `_run_sdk`, `_deliver_output`) driven by config axes (`repo_access`, `output_mode`, `allowed_tools`). Handles the full card lifecycle (todo → doing → done), retries with counter (max 3), deduplicates via `_processed_cards` set, sends real-time progress to Telegram
 - OrchestratorAgent: inherits BaseAgent, uses `ClaudeSDKClient` (multi-turn) for persistent conversation, connected to Telegram, creates/monitors cards via MCP tools, handles dependency tracking (parses `## Dependencies`, unblocks cards), extracts PR links from comments, tracks `chat_id` from conversations
-- `tools.py`: MCP tool definitions (`create_trello_card`, `list_workers`, `get_card_status`, `get_worker_cards`) exposed via `create_sdk_mcp_server`; `build_orchestrator_mcp_server()` for orchestrator, `build_worker_mcp_server()` for workers with `output_mode: "cards"`
+- `tools.py`: MCP tool definitions (`create_trello_card`, `list_workers`, `get_card_status`, `get_worker_cards`) exposed via `create_sdk_mcp_server`; single `build_mcp_server(name)` factory used by both orchestrator and workers with `output_mode: "cards"`
 - Agent registry: loads agents from config.json, starts them on app lifespan
 
 ### `git_manager` app
@@ -385,7 +391,7 @@ from claude_agent_sdk import query, ClaudeAgentOptions
 # - cwd: set when repo_access == "write"
 # - add_dirs: set when repo_access == "read"
 # - allowed_tools: from config.allowed_tools (+ MCP tool names for "cards" mode)
-# - mcp_servers: added when output_mode == "cards" (via build_worker_mcp_server())
+# - mcp_servers: added when output_mode == "cards" (via build_mcp_server("karavan_worker"))
 
 sdk_kwargs = {
     "allowed_tools": config.allowed_tools,  # from config, not hardcoded
@@ -399,34 +405,33 @@ if config.repo_access == "write":
 elif config.repo_access == "read":
     sdk_kwargs["add_dirs"] = [str(repo_dir)]
 if config.output_mode == "cards":
-    sdk_kwargs["mcp_servers"] = {"karavan": build_worker_mcp_server()}
+    sdk_kwargs["mcp_servers"] = {"karavan": build_mcp_server("karavan_worker")}
 
-async for message in query(prompt=prompt, options=ClaudeAgentOptions(**sdk_kwargs)):
+async for message in query(prompt=prompt, options=ClaudeAgentOptions.model_validate(sdk_kwargs)):
     # process messages, collect ResultMessage at end
 ```
 
 **Orchestrator uses `ClaudeSDKClient` (multi-turn, persistent context) with MCP tools:**
 ```python
-from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, create_sdk_mcp_server
+from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+from app.apps.agent.tools import build_mcp_server, MCP_TOOL_NAMES
 
-# MCP server exposes Trello operations as tools
-mcp_server = create_sdk_mcp_server("karavan_orchestrator", tools=[
-    create_trello_card, list_workers, get_card_status, get_worker_cards
-])
+# MCP server exposes Trello operations as tools (same factory as workers)
+mcp_server = build_mcp_server("karavan_orchestrator")
 
-client = ClaudeSDKClient(options=ClaudeAgentOptions(
-    add_dirs=["/path/to/repos/orchestrator/repo-a", "/path/to/repos/orchestrator/repo-b"],
-    allowed_tools=["Read", "Glob", "Grep",
-                   "create_trello_card", "list_workers", "get_card_status", "get_worker_cards"],
-    system_prompt={
+sdk_data = {
+    "add_dirs": ["/path/to/repos/orchestrator/repo-a", "/path/to/repos/orchestrator/repo-b"],
+    "allowed_tools": ["Read", "Glob", "Grep", *MCP_TOOL_NAMES],
+    "system_prompt": {
         "type": "preset",
         "preset": "claude_code",
         "append": orchestrator_system_prompt,
     },
-    permission_mode="bypassPermissions",
-    setting_sources=["project"],
-    mcp_servers={"karavan": mcp_server},
-))
+    "permission_mode": "bypassPermissions",
+    "setting_sources": ["project"],
+    "mcp_servers": {"karavan": mcp_server},
+}
+client = ClaudeSDKClient(options=ClaudeAgentOptions.model_validate(sdk_data))
 async with client:
     await client.query(user_message_from_telegram)
     async for message in client.receive_response():
