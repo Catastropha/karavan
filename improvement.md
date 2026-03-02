@@ -47,7 +47,7 @@ Weaknesses and improvements identified from a full codebase analysis. Work throu
 - **Fix:** On startup, list existing webhooks via the Trello API. Delete stale ones or skip registration if an identical webhook already exists.
 
 ### 7. No Trello API rate limiting
-- **Status:** TODO
+- **Status:** DONE
 - **File(s):** `app/core/resource.py`, all Trello CRUD files
 - **Problem:** Trello enforces 100 requests per 10 seconds per token. Multiple workers processing cards simultaneously (6-8 Trello calls each) can easily exceed this. A 429 response raises `HTTPStatusError` and crashes card processing.
 - **Fix:** Implement a token-bucket or sliding-window rate limiter on the shared Trello httpx client. Alternatively, add retry-with-backoff on 429 responses.
