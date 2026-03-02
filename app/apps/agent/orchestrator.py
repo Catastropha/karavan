@@ -35,6 +35,7 @@ class OrchestratorAgent(BaseAgent):
         self.config = config
         self._client: ClaudeSDKClient | None = None
         self._repo_dirs: list[Path] = []
+        self._known_chat_ids: set[int] = set()
 
     def should_process_webhook(self, list_id: str) -> bool:
         """Process webhooks when a card enters any known done or failed list."""
@@ -105,6 +106,9 @@ class OrchestratorAgent(BaseAgent):
             return
 
         logger.info("Orchestrator %s processing message from user %d: %s", self.name, msg.user_id, msg.text[:50])
+
+        # Track chat_id for proactive notifications (done/failed events)
+        self._known_chat_ids.add(msg.chat_id)
 
         # Send typing indicator
         await send_typing_action(msg.chat_id)
@@ -248,12 +252,13 @@ class OrchestratorAgent(BaseAgent):
 
         message = "\n".join(parts)
 
-        # Notify all allowed users
-        for user_id in settings.telegram_allowed_user_ids:
+        # Notify all known chats (fall back to user IDs for private-chat compat)
+        chat_ids = self._known_chat_ids or set(settings.telegram_allowed_user_ids)
+        for chat_id in chat_ids:
             try:
-                await send_message(user_id, escape_markdown_v2(message))
+                await send_message(chat_id, escape_markdown_v2(message))
             except Exception:
-                logger.exception("Failed to notify user %d about completed card", user_id)
+                logger.exception("Failed to notify chat %d about completed card", chat_id)
 
     async def _handle_failed_event(self, event: dict) -> None:
         """Handle a card-moved-to-failed webhook event — notify user via Telegram."""
@@ -261,9 +266,10 @@ class OrchestratorAgent(BaseAgent):
         card_id = event.get("card_id", "")
         logger.info("Orchestrator %s: card '%s' (%s) moved to failed", self.name, card_name, card_id)
 
-        for user_id in settings.telegram_allowed_user_ids:
+        chat_ids = self._known_chat_ids or set(settings.telegram_allowed_user_ids)
+        for chat_id in chat_ids:
             try:
                 text = escape_markdown_v2(f"Card failed: {card_name} — agent produced no code changes.")
-                await send_message(user_id, text)
+                await send_message(chat_id, text)
             except Exception:
-                logger.exception("Failed to notify user %d about failed card", user_id)
+                logger.exception("Failed to notify chat %d about failed card", chat_id)

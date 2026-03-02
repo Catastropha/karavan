@@ -109,7 +109,7 @@ Weaknesses and improvements identified from a full codebase analysis. Work throu
 - **Fix:** Verify the webhook source using the `x-trello-webhook` header or by checking that the callback URL matches what was registered.
 
 ### 16. Orchestrator uses `user_id` as `chat_id` for notifications
-- **Status:** TODO
+- **Status:** DONE
 - **File(s):** `app/apps/agent/orchestrator.py:140`
 - **Problem:** Done-event notifications iterate over `telegram_allowed_user_ids` and use them as `chat_id`. This works for private chats (where user_id == chat_id) but will fail in group chats.
 - **Fix:** Track the `chat_id` from the original conversation and notify that chat. For single-user this is cosmetic, but matters if the bot is ever used in a group.
