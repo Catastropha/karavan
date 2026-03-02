@@ -13,6 +13,7 @@ from app.apps.bot.markdown import escape_markdown_v2
 from app.apps.git_manager.crud.create import clone_repo
 from app.apps.git_manager.crud.update import pull_base
 from app.apps.trello.crud.read import get_card, get_card_actions, get_list_cards
+from app.common.cost import cost_tracker
 from app.common.model.input import BotMessage
 from app.core.config import BASE_DIR, OrchestratorAgentConfig, settings
 
@@ -120,9 +121,13 @@ class OrchestratorAgent(BaseAgent):
             await self._client.query(msg.text)
             response_text = ""
             async for message in self._client.receive_response():
-                if hasattr(message, "result"):
-                    result = message.result
-                    response_text = getattr(result, "text", str(result))
+                if hasattr(message, "total_cost_usd"):
+                    cost_tracker.record(
+                        self.name,
+                        message.total_cost_usd,
+                        message.usage,
+                    )
+                    response_text = getattr(message, "result", "") or ""
 
             # Send response back via Telegram
             if response_text:

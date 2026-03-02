@@ -69,7 +69,7 @@ Weaknesses and improvements identified from a full codebase analysis. Work throu
 - **Fix:** Fetch the card's comments to find the PR link. Include it in the Telegram notification. Implement basic dependency checking — when a card completes, check if any blocked cards can now be unblocked.
 
 ### 10. No cost tracking
-- **Status:** TODO
+- **Status:** DONE
 - **File(s):** `app/apps/agent/worker.py`, `app/apps/agent/orchestrator.py`
 - **Problem:** `ResultMessage` provides `total_cost_usd` and token usage but neither agent captures it. Running autonomous agents without tracking spend is risky.
 - **Fix:** Log cost per card execution. Optionally comment cost on the Trello card. Accumulate totals in memory and expose via the health endpoint.

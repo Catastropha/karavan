@@ -4,8 +4,9 @@ import logging
 
 from fastapi import APIRouter, Request, Response
 
-from app.apps.hook.model.output import WebhookPostOut
+from app.apps.hook.model.output import HealthGetOut, WebhookPostOut
 from app.apps.trello.model.input import TrelloWebhookPayload
+from app.common.cost import cost_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,9 @@ async def trello_webhook(agent_name: str, request: Request) -> WebhookPostOut:
 
 
 @router.get("/health")
-async def health_check() -> dict[str, str]:
-    """Basic health check endpoint."""
-    return {"status": "ok"}
+async def health_check() -> HealthGetOut:
+    """Health check endpoint with cost tracking data."""
+    return HealthGetOut(
+        costs_by_agent=cost_tracker.get_summary(),
+        costs_total=cost_tracker.get_totals(),
+    )

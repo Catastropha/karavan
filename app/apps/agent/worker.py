@@ -12,6 +12,7 @@ from app.apps.git_manager.crud.update import commit_and_push, create_pr, pull_ba
 from app.apps.git_manager.model.input import PRCreateIn
 from app.apps.trello.crud.read import get_card, get_card_actions
 from app.apps.trello.crud.update import add_comment, move_card
+from app.common.cost import cost_tracker
 from app.core.config import BASE_DIR, WorkerAgentConfig, settings
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,8 @@ class WorkerAgent(BaseAgent):
                 f"When you are done, briefly summarize what files you changed and why. The harness will commit, push, and open a PR automatically.\n"
             )
             result_text = ""
+            execution_cost: float | None = None
+            execution_usage: dict | None = None
             async for message in query(
                 prompt=prompt,
                 options=ClaudeAgentOptions(
@@ -147,8 +150,13 @@ class WorkerAgent(BaseAgent):
                     max_turns=50,
                 ),
             ):
-                if hasattr(message, "result"):
-                    result_text = getattr(message.result, "text", str(message.result))
+                if hasattr(message, "total_cost_usd"):
+                    execution_cost = message.total_cost_usd
+                    execution_usage = message.usage
+                    result_text = getattr(message, "result", "") or ""
+
+            # Record cost
+            cost_tracker.record(self.name, execution_cost, execution_usage, card_id=card_id)
 
             # 5. Commit and push
             commit_msg = f"[karavan] {card.name}\n\n{card.url}"
@@ -170,8 +178,11 @@ class WorkerAgent(BaseAgent):
                 base=self.config.base_branch,
             ))
 
-            # 7. Comment PR link on card
-            await add_comment(card_id, f"PR opened: {pr.html_url}")
+            # 7. Comment PR link and cost on card
+            comment_parts = [f"PR opened: {pr.html_url}"]
+            if execution_cost is not None:
+                comment_parts.append(f"Cost: ${execution_cost:.4f}")
+            await add_comment(card_id, "\n".join(comment_parts))
 
             # 8. Move to done
             await move_card(card_id, self.config.lists.done)
