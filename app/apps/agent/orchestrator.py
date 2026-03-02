@@ -8,7 +8,7 @@ from uuid import uuid4
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
 from app.apps.agent.base import BaseAgent
-from app.apps.agent.tools import build_orchestrator_mcp_server
+from app.apps.agent.tools import MCP_TOOL_NAMES, build_mcp_server
 from app.apps.bot.crud.create import send_message, send_typing_action
 from app.apps.bot.markdown import escape_markdown_v2
 from app.apps.git_manager.crud.create import clone_repo
@@ -57,15 +57,12 @@ class OrchestratorAgent(BaseAgent):
             self._repo_dirs.append(repo_dir)
 
         # Build MCP server with Trello orchestration tools
-        mcp_server = build_orchestrator_mcp_server()
+        mcp_server = build_mcp_server("karavan_orchestrator")
 
         # Create Claude SDK client with read access to repos + Trello tools
         self._client = ClaudeSDKClient(options=ClaudeAgentOptions(
             add_dirs=[str(d) for d in self._repo_dirs],
-            allowed_tools=[
-                "Read", "Glob", "Grep",
-                "list_workers", "create_trello_card", "get_card_status", "get_worker_cards",
-            ],
+            allowed_tools=["Read", "Glob", "Grep", *MCP_TOOL_NAMES],
             mcp_servers={"karavan": mcp_server},
             system_prompt={
                 "type": "preset",
@@ -232,6 +229,16 @@ class OrchestratorAgent(BaseAgent):
 
         return unblocked
 
+    async def _notify_chats(self, message: str) -> None:
+        """Send a notification to all known chats, falling back to allowed user IDs."""
+        chat_ids = self._known_chat_ids or set(settings.telegram_allowed_user_ids)
+        escaped = escape_markdown_v2(message)
+        for chat_id in chat_ids:
+            try:
+                await send_message(chat_id, escaped)
+            except Exception:
+                logger.exception("Failed to notify chat %d", chat_id)
+
     async def _handle_done_event(self, event: dict) -> None:
         """Handle a card-moved-to-done webhook event.
 
@@ -242,46 +249,26 @@ class OrchestratorAgent(BaseAgent):
         card_id = event.get("card_id", "")
         logger.info("Orchestrator %s: card '%s' (%s) moved to done", self.name, card_name, card_id)
 
-        # Fetch PR link from card comments
         pr_link = await self._extract_pr_link(card_id) if card_id else None
 
-        # Build notification message
         parts = [f"Card completed: {card_name}"]
         if pr_link:
             parts.append(f"PR: {pr_link}")
 
-        # Check for newly unblocked dependent cards
-        unblocked: list[dict] = []
         if card_id:
             try:
                 unblocked = await self._find_unblocked_cards(card_id)
+                if unblocked:
+                    names = ", ".join(c["card_name"] for c in unblocked)
+                    parts.append(f"Unblocked: {names}")
             except Exception:
                 logger.exception("Failed to check for unblocked cards after %s", card_id)
 
-        if unblocked:
-            names = ", ".join(c["card_name"] for c in unblocked)
-            parts.append(f"Unblocked: {names}")
-
-        message = "\n".join(parts)
-
-        # Notify all known chats (fall back to user IDs for private-chat compat)
-        chat_ids = self._known_chat_ids or set(settings.telegram_allowed_user_ids)
-        for chat_id in chat_ids:
-            try:
-                await send_message(chat_id, escape_markdown_v2(message))
-            except Exception:
-                logger.exception("Failed to notify chat %d about completed card", chat_id)
+        await self._notify_chats("\n".join(parts))
 
     async def _handle_failed_event(self, event: dict) -> None:
         """Handle a card-moved-to-failed webhook event — notify user via Telegram."""
         card_name = event.get("card_name", "Unknown card")
         card_id = event.get("card_id", "")
         logger.info("Orchestrator %s: card '%s' (%s) moved to failed", self.name, card_name, card_id)
-
-        chat_ids = self._known_chat_ids or set(settings.telegram_allowed_user_ids)
-        for chat_id in chat_ids:
-            try:
-                text = escape_markdown_v2(f"Card failed: {card_name} — check card comments for details.")
-                await send_message(chat_id, text)
-            except Exception:
-                logger.exception("Failed to notify chat %d about failed card", chat_id)
+        await self._notify_chats(f"Card failed: {card_name} — check card comments for details.")

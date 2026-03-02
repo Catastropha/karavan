@@ -19,38 +19,33 @@ MIN_EDIT_GAP: float = 10.0
 MAX_ACTIVITIES: int = 5
 
 
+_TOOL_DESCRIPTIONS: dict[str, tuple[str, str, str]] = {
+    # tool_name: (input_key, label_with_value, label_without_value)
+    "Read":  ("file_path", "Reading {}",         "Reading file"),
+    "Write": ("file_path", "Writing {}",         "Writing file"),
+    "Edit":  ("file_path", "Editing {}",         "Editing file"),
+    "Glob":  ("pattern",   "Searching files: {}", "Searching files"),
+    "Grep":  ("pattern",   "Searching for: {}",  "Searching content"),
+}
+
+
 def _describe_tool_use(block: ToolUseBlock) -> str | None:
     """Convert a ToolUseBlock into a human-readable one-liner."""
-    name = block.name
     inp: dict[str, Any] = block.input or {}
 
-    if name == "Read":
-        path = inp.get("file_path", "")
-        return f"Reading {_short_path(path)}" if path else "Reading file"
-
-    if name == "Write":
-        path = inp.get("file_path", "")
-        return f"Writing {_short_path(path)}" if path else "Writing file"
-
-    if name == "Edit":
-        path = inp.get("file_path", "")
-        return f"Editing {_short_path(path)}" if path else "Editing file"
-
-    if name == "Bash":
+    if block.name == "Bash":
         cmd = inp.get("command", "")
         if len(cmd) > 60:
             cmd = cmd[:57] + "..."
         return f"Running: {cmd}" if cmd else "Running command"
 
-    if name == "Glob":
-        pattern = inp.get("pattern", "")
-        return f"Searching files: {pattern}" if pattern else "Searching files"
+    desc = _TOOL_DESCRIPTIONS.get(block.name)
+    if desc:
+        key, with_val, without_val = desc
+        value = inp.get(key, "")
+        return with_val.format(_short_path(value)) if value else without_val
 
-    if name == "Grep":
-        pattern = inp.get("pattern", "")
-        return f"Searching for: {pattern}" if pattern else "Searching content"
-
-    return f"Using {name}"
+    return f"Using {block.name}"
 
 
 def _short_path(path: str) -> str:

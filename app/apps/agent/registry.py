@@ -47,10 +47,8 @@ class AgentRegistry:
     @property
     def orchestrator(self) -> OrchestratorAgent | None:
         """Return the orchestrator agent, if any."""
-        for v in self._agents.values():
-            if isinstance(v, OrchestratorAgent):
-                return v
-        return None
+        agent = self._agents.get("orchestrator")
+        return agent if isinstance(agent, OrchestratorAgent) else None
 
     def get_all_status(self) -> dict[str, dict[str, Any]]:
         """Return status for all registered agents."""

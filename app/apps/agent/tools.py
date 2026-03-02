@@ -183,19 +183,15 @@ async def get_worker_cards_tool(args: dict) -> dict:
         return _text_result(f"Failed to get cards: {e}", is_error=True)
 
 
-def build_orchestrator_mcp_server():
-    """Create the MCP server with all orchestrator tools."""
-    return create_sdk_mcp_server(
-        name="karavan_orchestrator",
-        version="0.1.0",
-        tools=[list_workers_tool, create_trello_card_tool, get_card_status_tool, get_worker_cards_tool],
-    )
+MCP_TOOL_NAMES: list[str] = [
+    "list_workers", "create_trello_card", "get_card_status", "get_worker_cards",
+]
 
 
-def build_worker_mcp_server():
-    """Create MCP server for workers that create Trello cards (output_mode: 'cards')."""
+def build_mcp_server(name: str = "karavan"):
+    """Create an MCP server with Trello card management tools."""
     return create_sdk_mcp_server(
-        name="karavan_worker",
+        name=name,
         version="0.1.0",
         tools=[list_workers_tool, create_trello_card_tool, get_card_status_tool, get_worker_cards_tool],
     )

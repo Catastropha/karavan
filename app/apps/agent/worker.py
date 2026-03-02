@@ -2,12 +2,11 @@
 
 import logging
 import re
-from pathlib import Path
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 
 from app.apps.agent.base import BaseAgent
-from app.apps.agent.tools import build_worker_mcp_server
+from app.apps.agent.tools import MCP_TOOL_NAMES, build_mcp_server
 from app.apps.git_manager.crud.create import clone_repo, create_branch
 from app.apps.git_manager.crud.update import commit_and_push, create_pr, pull_base
 from app.apps.git_manager.model.input import PRCreateIn
@@ -21,6 +20,54 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 FAIL_PREFIX = "[karavan:fail]"
+
+# Per-output_mode prompt fragments: (intro, rules, completion)
+_MODE_PROMPTS: dict[str, tuple[str, list[str], str]] = {
+    "pr": (
+        "You are a worker agent in the Karavan system. Your job is to **write code** that fulfills the task below.\n",
+        [
+            "- **DO** read existing code to understand patterns before making changes.",
+            "- **DO** write clean, production-quality code that fits the existing codebase style.",
+            "- **DO** create or modify tests if the project has a test suite.",
+            "- **DO NOT** run any git commands (no `git add`, `git commit`, `git push`, `git checkout`, etc.). The harness handles all git operations after you finish.",
+            "- **DO NOT** just explain what to do — actually write the code.",
+            "- **DO NOT** modify files unrelated to this task.",
+        ],
+        "When you are done, briefly summarize what files you changed and why. The harness will commit, push, and open a PR automatically.",
+    ),
+    "comment": (
+        "You are a worker agent in the Karavan system. Your job is to **analyze the task below and provide a detailed written response**.\n",
+        [
+            "- **DO** provide thorough, actionable analysis.",
+            "- **DO** reference specific files and line numbers when relevant.",
+            "- **DO NOT** modify any files — this is a read-only analysis task.",
+        ],
+        "When you are done, provide your complete analysis. It will be posted as a comment on the Trello card.",
+    ),
+    "cards": (
+        "You are a worker agent in the Karavan system. Your job is to **break down the task below into concrete, actionable sub-tasks** and create Trello cards for each using the available MCP tools.\n"
+        "\n"
+        "Use `list_workers` to discover available workers and their todo list IDs, then use `create_trello_card` to create cards.\n",
+        [
+            "- **DO** use `list_workers` to find available workers before creating cards.",
+            "- **DO** follow the card schema format (## Task, ## Context, ## Acceptance Criteria).",
+            "- **DO** set dependencies between cards when order matters.",
+            "- **DO NOT** modify any files — use only the MCP tools to create cards.",
+        ],
+        "When you are done creating cards, briefly summarize what cards you created and why.",
+    ),
+    "update": (
+        "You are a worker agent in the Karavan system. Your job is to **produce an improved version of the card description** below.\n"
+        "\n"
+        "Output ONLY the updated card description in markdown. Do not include any preamble or explanation — just the new description content.\n",
+        [
+            "- **DO** preserve the card schema structure (## Task, ## Context, etc.).",
+            "- **DO** make the description clearer, more detailed, and more actionable.",
+            "- **DO NOT** modify any files — your text output IS the deliverable.",
+        ],
+        "Output the complete updated card description now.",
+    ),
+}
 
 
 def _parse_repo_url(repo_url: str) -> tuple[str, str]:
@@ -97,29 +144,9 @@ class WorkerAgent(BaseAgent):
 
     def _build_prompt(self, card: object, branch_name: str) -> str:
         """Build the SDK prompt based on output_mode and repo_access."""
-        mode = self.config.output_mode
-        parts = [f"# Task: {card.name}\n"]
+        intro, rules, completion = _MODE_PROMPTS[self.config.output_mode]
 
-        if mode == "pr":
-            parts.append(
-                "You are a worker agent in the Karavan system. Your job is to **write code** that fulfills the task below.\n"
-            )
-        elif mode == "comment":
-            parts.append(
-                "You are a worker agent in the Karavan system. Your job is to **analyze the task below and provide a detailed written response**.\n"
-            )
-        elif mode == "cards":
-            parts.append(
-                "You are a worker agent in the Karavan system. Your job is to **break down the task below into concrete, actionable sub-tasks** and create Trello cards for each using the available MCP tools.\n"
-                "\n"
-                "Use `list_workers` to discover available workers and their todo list IDs, then use `create_trello_card` to create cards.\n"
-            )
-        elif mode == "update":
-            parts.append(
-                "You are a worker agent in the Karavan system. Your job is to **produce an improved version of the card description** below.\n"
-                "\n"
-                "Output ONLY the updated card description in markdown. Do not include any preamble or explanation — just the new description content.\n"
-            )
+        parts = [f"# Task: {card.name}\n", intro]
 
         # Repo context (when applicable)
         if self.config.repo_access != "none" and self.owner:
@@ -132,53 +159,16 @@ class WorkerAgent(BaseAgent):
                 parts.append(f"- **Directory:** `{self.repo_dir}` (read-only context)")
             parts.append("")
 
-        # Rules (mode-specific)
         parts.append("## Rules")
-        if mode == "pr":
-            parts.extend([
-                "- **DO** read existing code to understand patterns before making changes.",
-                "- **DO** write clean, production-quality code that fits the existing codebase style.",
-                "- **DO** create or modify tests if the project has a test suite.",
-                "- **DO NOT** run any git commands (no `git add`, `git commit`, `git push`, `git checkout`, etc.). The harness handles all git operations after you finish.",
-                "- **DO NOT** just explain what to do — actually write the code.",
-                "- **DO NOT** modify files unrelated to this task.",
-            ])
-        elif mode == "comment":
-            parts.extend([
-                "- **DO** provide thorough, actionable analysis.",
-                "- **DO** reference specific files and line numbers when relevant.",
-                "- **DO NOT** modify any files — this is a read-only analysis task.",
-            ])
-        elif mode == "cards":
-            parts.extend([
-                "- **DO** use `list_workers` to find available workers before creating cards.",
-                "- **DO** follow the card schema format (## Task, ## Context, ## Acceptance Criteria).",
-                "- **DO** set dependencies between cards when order matters.",
-                "- **DO NOT** modify any files — use only the MCP tools to create cards.",
-            ])
-        elif mode == "update":
-            parts.extend([
-                "- **DO** preserve the card schema structure (## Task, ## Context, etc.).",
-                "- **DO** make the description clearer, more detailed, and more actionable.",
-                "- **DO NOT** modify any files — your text output IS the deliverable.",
-            ])
+        parts.extend(rules)
         parts.append("")
 
-        # Card description
         parts.append("## Card Description")
         parts.append(card.desc)
         parts.append("")
 
-        # Completion instructions
         parts.append("## Completion")
-        if mode == "pr":
-            parts.append("When you are done, briefly summarize what files you changed and why. The harness will commit, push, and open a PR automatically.")
-        elif mode == "comment":
-            parts.append("When you are done, provide your complete analysis. It will be posted as a comment on the Trello card.")
-        elif mode == "cards":
-            parts.append("When you are done creating cards, briefly summarize what cards you created and why.")
-        elif mode == "update":
-            parts.append("Output the complete updated card description now.")
+        parts.append(completion)
 
         return "\n".join(parts)
 
@@ -208,13 +198,8 @@ class WorkerAgent(BaseAgent):
             sdk_kwargs["add_dirs"] = [str(self.repo_dir)]
 
         if self.config.output_mode == "cards":
-            mcp_server = build_worker_mcp_server()
-            sdk_kwargs["mcp_servers"] = {"karavan": mcp_server}
-            # Add MCP tool names to allowed_tools
-            mcp_tool_names = ["list_workers", "create_trello_card", "get_card_status", "get_worker_cards"]
-            for tool_name in mcp_tool_names:
-                if tool_name not in sdk_kwargs["allowed_tools"]:
-                    sdk_kwargs["allowed_tools"].append(tool_name)
+            sdk_kwargs["mcp_servers"] = {"karavan": build_mcp_server("karavan_worker")}
+            sdk_kwargs["allowed_tools"] = list({*sdk_kwargs["allowed_tools"], *MCP_TOOL_NAMES})
 
         async for message in query(prompt=prompt, options=ClaudeAgentOptions(**sdk_kwargs)):
             tracker.record_activity(message)
@@ -259,8 +244,6 @@ class WorkerAgent(BaseAgent):
             if cost is not None:
                 await add_comment(card_id, f"Description updated. Cost: ${cost:.4f}")
             return True
-
-        return True
 
     async def _deliver_pr(
         self,
