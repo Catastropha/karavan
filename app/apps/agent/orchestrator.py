@@ -10,7 +10,7 @@ from app.apps.agent.tools import build_orchestrator_mcp_server
 from app.apps.bot.crud.create import send_message, send_typing_action
 from app.apps.bot.markdown import escape_markdown_v2
 from app.apps.git_manager.crud.create import clone_repo
-from app.apps.git_manager.crud.update import pull_dev
+from app.apps.git_manager.crud.update import pull_base
 from app.common.model.input import BotMessage
 from app.core.config import BASE_DIR, OrchestratorAgentConfig, settings
 
@@ -45,9 +45,9 @@ class OrchestratorAgent(BaseAgent):
             repo_dir = BASE_DIR / "repos" / "orchestrator" / repo_name
             await clone_repo(repo_url, repo_dir)
             try:
-                await pull_dev(repo_dir)
+                await pull_base(repo_dir, self.config.base_branch)
             except Exception:
-                logger.warning("Failed to pull dev for %s, using existing clone", repo_name)
+                logger.warning("Failed to pull %s for %s, using existing clone", self.config.base_branch, repo_name)
             self._repo_dirs.append(repo_dir)
 
         # Build MCP server with Trello orchestration tools
@@ -110,7 +110,7 @@ class OrchestratorAgent(BaseAgent):
             # Pull latest from all repos before processing
             for repo_dir in self._repo_dirs:
                 try:
-                    await pull_dev(repo_dir)
+                    await pull_base(repo_dir, self.config.base_branch)
                 except Exception:
                     pass
 

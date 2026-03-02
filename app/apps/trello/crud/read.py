@@ -23,6 +23,14 @@ async def get_list_cards(list_id: str) -> list[CardOut]:
     return [CardOut(**c) for c in resp.json()]
 
 
+async def get_card_actions(card_id: str, action_filter: str = "commentCard") -> list[dict]:
+    """Fetch actions on a Trello card, filtered by type."""
+    params = {**auth_params(), "filter": action_filter}
+    resp = await res.trello_client.get(f"cards/{card_id}/actions", params=params)
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def get_board_lists(board_id: str) -> list[ListOut]:
     """Fetch all lists on a Trello board."""
     resp = await res.trello_client.get(f"boards/{board_id}/lists", params=auth_params())

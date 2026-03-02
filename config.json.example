@@ -9,6 +9,7 @@
       },
       "repo": "git@github.com:user/myproject-api.git",
       "branch_prefix": "agent/api",
+      "base_branch": "main",
       "system_prompt": "You are a FastAPI backend developer. Follow existing patterns in the codebase."
     },
     "static": {
@@ -20,6 +21,7 @@
       },
       "repo": "git@github.com:user/myproject-static.git",
       "branch_prefix": "agent/static",
+      "base_branch": "main",
       "system_prompt": "You are a frontend developer. Use the existing component library."
     },
     "orchestrator": {
@@ -30,6 +32,7 @@
         "git@github.com:user/myproject-static.git"
       ],
       "failed_list_id": "trello_list_id",
+      "base_branch": "main",
       "system_prompt": "You are an engineering lead. Break features into clear tasks for worker agents."
     }
   }

@@ -31,6 +31,7 @@ class WorkerAgentConfig(BaseModel):
     lists: Annotated[WorkerListsConfig, Field(description="Trello list IDs")]
     repo: Annotated[str, Field(min_length=1, description="Git repo SSH URL")]
     branch_prefix: Annotated[str, Field(min_length=1, description="Branch prefix for this agent")]
+    base_branch: Annotated[str, Field(default="main", description="Base branch to pull and target PRs against")]
     system_prompt: Annotated[str, Field(default="", description="System prompt for Claude")]
 
 
@@ -41,6 +42,7 @@ class OrchestratorAgentConfig(BaseModel):
     board_id: Annotated[str, Field(min_length=1, description="Trello board ID")]
     repos: Annotated[list[str], Field(min_items=1, description="Git repo SSH URLs for read access")]
     failed_list_id: Annotated[str, Field(min_length=1, description="Shared Trello list ID for failed cards")]
+    base_branch: Annotated[str, Field(default="main", description="Base branch to pull from repos")]
     system_prompt: Annotated[str, Field(default="", description="System prompt for Claude")]
 
 

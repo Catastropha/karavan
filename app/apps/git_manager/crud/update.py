@@ -12,11 +12,11 @@ from app.core.resource import res
 logger = logging.getLogger(__name__)
 
 
-async def pull_dev(repo_dir: str | Path) -> None:
-    """Checkout dev and pull latest changes."""
-    await _run_git(["git", "checkout", "dev"], cwd=repo_dir)
-    await _run_git(["git", "pull", "origin", "dev"], cwd=repo_dir)
-    logger.info("Pulled dev in %s", repo_dir)
+async def pull_base(repo_dir: str | Path, branch: str = "main") -> None:
+    """Checkout base branch and pull latest changes."""
+    await _run_git(["git", "checkout", branch], cwd=repo_dir)
+    await _run_git(["git", "pull", "origin", branch], cwd=repo_dir)
+    logger.info("Pulled %s in %s", branch, repo_dir)
 
 
 async def commit_and_push(repo_dir: str | Path, branch_name: str, message: str) -> bool:

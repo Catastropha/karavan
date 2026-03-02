@@ -8,13 +8,16 @@ from claude_agent_sdk import ClaudeAgentOptions, query
 
 from app.apps.agent.base import BaseAgent
 from app.apps.git_manager.crud.create import clone_repo, create_branch
-from app.apps.git_manager.crud.update import commit_and_push, create_pr, pull_dev
+from app.apps.git_manager.crud.update import commit_and_push, create_pr, pull_base
 from app.apps.git_manager.model.input import PRCreateIn
-from app.apps.trello.crud.read import get_card
+from app.apps.trello.crud.read import get_card, get_card_actions
 from app.apps.trello.crud.update import add_comment, move_card
 from app.core.config import BASE_DIR, WorkerAgentConfig, settings
 
 logger = logging.getLogger(__name__)
+
+MAX_RETRIES = 3
+FAIL_PREFIX = "[karavan:fail]"
 
 
 def _parse_repo_url(repo_url: str) -> tuple[str, str]:
@@ -30,7 +33,7 @@ class WorkerAgent(BaseAgent):
 
     Lifecycle per card:
     1. Move card to doing
-    2. git pull origin dev
+    2. git pull origin {base_branch}
     3. git checkout -b {branch_prefix}/card-{id}
     4. Claude Agent SDK query() with card description
     5. git commit + push
@@ -62,6 +65,14 @@ class WorkerAgent(BaseAgent):
 
         await self._execute_card(card_id)
 
+    async def _count_failures(self, card_id: str) -> int:
+        """Count failure comments on a card by looking for the fail prefix."""
+        actions = await get_card_actions(card_id)
+        return sum(
+            1 for a in actions
+            if a.get("data", {}).get("text", "").startswith(FAIL_PREFIX)
+        )
+
     async def _execute_card(self, card_id: str) -> None:
         """Full card execution lifecycle."""
         card = await get_card(card_id)
@@ -76,7 +87,7 @@ class WorkerAgent(BaseAgent):
 
             # 2. Ensure repo is cloned, pull dev
             await clone_repo(self.config.repo, self.repo_dir)
-            await pull_dev(self.repo_dir)
+            await pull_base(self.repo_dir, self.config.base_branch)
 
             # 3. Create feature branch
             await create_branch(self.repo_dir, branch_name)
@@ -131,7 +142,7 @@ class WorkerAgent(BaseAgent):
 
             if not has_changes:
                 logger.warning("Worker %s: agent produced no changes for card '%s'", self.name, card.name)
-                await add_comment(card_id, "Agent completed but produced no code changes.")
+                await add_comment(card_id, f"{FAIL_PREFIX} Agent completed but produced no code changes.")
                 await move_card(card_id, settings.failed_list_id)
                 return
 
@@ -142,7 +153,7 @@ class WorkerAgent(BaseAgent):
                 title=f"[karavan] {card.name}",
                 body=f"Trello card: {card.url}\n\n{result_text[:1000] if result_text else 'Automated by Karavan agent.'}",
                 head=branch_name,
-                base="dev",
+                base=self.config.base_branch,
             ))
 
             # 7. Comment PR link on card
@@ -155,7 +166,23 @@ class WorkerAgent(BaseAgent):
         except Exception:
             logger.exception("Worker %s failed on card '%s'", self.name, card.name)
             try:
-                await add_comment(card_id, f"Agent {self.name} failed to process this card. Check server logs.")
-                await move_card(card_id, self.config.lists.todo)
+                failure_count = await self._count_failures(card_id) + 1
+                attempt_msg = f"Attempt {failure_count}/{MAX_RETRIES} failed"
+
+                if failure_count >= MAX_RETRIES:
+                    await add_comment(
+                        card_id,
+                        f"{FAIL_PREFIX} {attempt_msg} (max retries reached). "
+                        f"Agent {self.name} cannot process this card. Check server logs.",
+                    )
+                    await move_card(card_id, settings.failed_list_id)
+                    logger.warning("Worker %s: card '%s' moved to Failed after %d attempts", self.name, card.name, failure_count)
+                else:
+                    await add_comment(
+                        card_id,
+                        f"{FAIL_PREFIX} {attempt_msg}, will retry. "
+                        f"Agent {self.name} failed to process this card. Check server logs.",
+                    )
+                    await move_card(card_id, self.config.lists.todo)
             except Exception:
-                logger.exception("Failed to move card %s back to todo", card_id)
+                logger.exception("Failed to handle failure for card %s", card_id)

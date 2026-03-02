@@ -29,13 +29,13 @@ Weaknesses and improvements identified from a full codebase analysis. Work throu
 ## P1 — Significant (Will cause failures under real usage)
 
 ### 4. Infinite retry loop on failure
-- **Status:** TODO
+- **Status:** DONE
 - **File(s):** `app/apps/agent/worker.py:126-132`
 - **Problem:** On any exception, the card moves back to `todo`, which triggers the webhook, which picks it up again, which fails again. Poison cards loop forever.
 - **Fix:** Add a retry counter (tracked via Trello card labels or comments). After N failures (e.g., 3), move the card to a `failed` list or leave it in `doing` with an error comment instead of returning to `todo`.
 
 ### 5. Base branch hardcoded to `dev`
-- **Status:** TODO
+- **Status:** DONE
 - **File(s):** `app/apps/git_manager/crud/update.py:pull_dev()`, `app/apps/agent/worker.py:116`
 - **Problem:** `pull_dev()` checks out `dev` and PRs target `dev`. Projects using `main` (or any other branch) as their primary branch will break entirely.
 - **Fix:** Add a `base_branch` field to `WorkerAgentConfig` (defaulting to `main`). Pass it through to `pull_dev()` and PR creation.
