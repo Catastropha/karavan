@@ -16,7 +16,7 @@ The documentation has drifted from the code in three areas:
 
 ## 2. Add missing return type hint on `_get_worker`
 
-**Status:** Open
+**Status:** Done
 
 `_get_worker(name: str)` in `tools.py` is missing its return type annotation. Should be `-> WorkerAgentConfig | None`. Violates the project's "type hints on everything" convention.
 

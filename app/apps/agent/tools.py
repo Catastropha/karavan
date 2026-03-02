@@ -12,7 +12,7 @@ from claude_agent_sdk import create_sdk_mcp_server, tool
 from app.apps.trello.crud.create import create_card
 from app.apps.trello.crud.read import get_card, get_list_cards
 from app.apps.trello.model.input import CardCreateIn
-from app.core.config import settings
+from app.core.config import WorkerAgentConfig, settings
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ def _text_result(text: str, is_error: bool = False) -> dict:
     return result
 
 
-def _get_worker(name: str):
+def _get_worker(name: str) -> WorkerAgentConfig | None:
     """Look up a worker config by name."""
     return settings.all_workers.get(name)
 
