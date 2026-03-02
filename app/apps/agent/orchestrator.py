@@ -3,6 +3,7 @@
 import logging
 import re
 from pathlib import Path
+from uuid import uuid4
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
@@ -36,6 +37,7 @@ class OrchestratorAgent(BaseAgent):
         self._client: ClaudeSDKClient | None = None
         self._repo_dirs: list[Path] = []
         self._known_chat_ids: set[int] = set()
+        self._session_id: str = "default"
 
     def should_process_webhook(self, list_id: str) -> bool:
         """Process webhooks when a card enters any known done or failed list."""
@@ -86,8 +88,18 @@ class OrchestratorAgent(BaseAgent):
             self._client = None
             logger.info("Orchestrator %s: Claude SDK client stopped", self.name)
 
+    def reset_session(self) -> None:
+        """Reset conversation context by switching to a new session ID."""
+        self._session_id = str(uuid4())
+        logger.info("Orchestrator %s: session reset to %s", self.name, self._session_id)
+
     async def _process(self, item: object) -> None:
         """Process a queue item — BotMessage, done-list event, or failed-list event."""
+        if isinstance(item, BotMessage) and item.text.strip() == "/clear":
+            self._known_chat_ids.add(item.chat_id)
+            self.reset_session()
+            await send_message(item.chat_id, escape_markdown_v2("Context cleared. Starting fresh."))
+            return
         if isinstance(item, BotMessage):
             await self._handle_user_message(item)
         elif isinstance(item, dict) and item.get("action_type"):
@@ -122,7 +134,7 @@ class OrchestratorAgent(BaseAgent):
                     pass
 
             # Query Claude with the user's message
-            await self._client.query(msg.text)
+            await self._client.query(msg.text, session_id=self._session_id)
             response_text = ""
             async for message in self._client.receive_response():
                 if hasattr(message, "total_cost_usd"):

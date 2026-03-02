@@ -2,15 +2,9 @@
 
 ## 1. Clear orchestrator context via Telegram
 
-**Status:** Open
+**Status:** Done
 
-Can we reset the orchestrator's conversation context through Telegram, similar to `/clear` in Claude Code SDK? This would let the user start a fresh planning session without restarting the server.
-
-**Considerations:**
-- `ClaudeSDKClient` may need to be re-instantiated or expose a `clear()` method
-- Could be triggered by a Telegram command like `/clear`
-- Should confirm to the user that context was cleared
-- Decide whether to also clear the orchestrator's async queue or just the SDK conversation history
+Implemented `/clear` Telegram command that resets the orchestrator's conversation context by switching to a new `session_id` (SDK supports per-session conversation isolation). The command flows through the existing queue so it's processed in order — no race conditions with in-flight queries.
 
 ## 2. Agent roles beyond "worker"
 
