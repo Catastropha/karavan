@@ -3,22 +3,32 @@
 import logging
 from typing import Any
 
+from app.apps.bot.markdown import strip_markdown_v2
 from app.core.config import settings
 from app.core.resource import res
 
 logger = logging.getLogger(__name__)
 
 
-async def send_message(chat_id: int, text: str, parse_mode: str = "MarkdownV2", reply_markup: dict[str, Any] | None = None) -> dict:
-    """Send a message to a Telegram chat."""
+async def send_message(chat_id: int, text: str, parse_mode: str | None = "MarkdownV2", reply_markup: dict[str, Any] | None = None) -> dict:
+    """Send a message to a Telegram chat.
+
+    Falls back to plain text if Telegram rejects the MarkdownV2 formatting.
+    """
     payload: dict[str, Any] = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": parse_mode,
     }
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     if reply_markup:
         payload["reply_markup"] = reply_markup
     resp = await res.telegram_client.post("sendMessage", json=payload)
+    if resp.status_code == 400 and parse_mode:
+        logger.warning("MarkdownV2 send failed for chat %d, retrying as plain text", chat_id)
+        payload.pop("parse_mode", None)
+        payload["text"] = strip_markdown_v2(text)
+        resp = await res.telegram_client.post("sendMessage", json=payload)
     resp.raise_for_status()
     logger.info("Sent message to chat %d", chat_id)
     return resp.json()

@@ -75,7 +75,7 @@ Weaknesses and improvements identified from a full codebase analysis. Work throu
 - **Fix:** Log cost per card execution. Optionally comment cost on the Trello card. Accumulate totals in memory and expose via the health endpoint.
 
 ### 11. MarkdownV2 escaping is fragile
-- **Status:** TODO
+- **Status:** DONE
 - **File(s):** `app/apps/bot/markdown.py`
 - **Problem:** Only handles `**bold**` conversion. Doesn't handle code blocks (``` or \`inline\`), links, lists, or other markdown the LLM will inevitably produce. Complex responses break Telegram rendering.
 - **Fix:** Implement proper markdown-to-MarkdownV2 conversion covering: code blocks (preserve as-is, only escape inside), inline code, links, bullet lists. Or fall back to `parse_mode=None` for plain text when escaping fails.
