@@ -8,15 +8,6 @@ from pydantic import BaseModel, Field
 # --- Webhook payload models ---
 
 
-class TrelloBoard(BaseModel):
-    """Board reference in a Trello webhook action."""
-
-    id: Annotated[str, Field(description="Board ID")]
-    name: Annotated[str, Field(default="", description="Board name")]
-
-    model_config = {"extra": "ignore"}
-
-
 class TrelloList(BaseModel):
     """List reference in a Trello webhook action."""
 
@@ -31,41 +22,26 @@ class TrelloCardRef(BaseModel):
 
     id: Annotated[str, Field(description="Card ID")]
     name: Annotated[str, Field(default="", description="Card name")]
-    short_link: Annotated[str, Field(default="", description="Short link", alias="shortLink")]
 
-    model_config = {"extra": "ignore", "populate_by_name": True}
+    model_config = {"extra": "ignore"}
 
 
 class TrelloActionData(BaseModel):
     """Data payload within a Trello webhook action."""
 
-    board: Annotated[TrelloBoard | None, Field(default=None, description="Board reference")]
     card: Annotated[TrelloCardRef | None, Field(default=None, description="Card reference")]
-    list: Annotated[TrelloList | None, Field(default=None, description="List reference")]
-    list_before: Annotated[TrelloList | None, Field(default=None, description="Previous list", alias="listBefore")]
     list_after: Annotated[TrelloList | None, Field(default=None, description="New list", alias="listAfter")]
 
     model_config = {"extra": "ignore", "populate_by_name": True}
 
 
-class TrelloMember(BaseModel):
-    """Member who performed the action."""
-
-    id: Annotated[str, Field(description="Member ID")]
-    username: Annotated[str, Field(default="", description="Username")]
-
-    model_config = {"extra": "ignore"}
-
-
 class TrelloAction(BaseModel):
     """A single Trello webhook action."""
 
-    id: Annotated[str, Field(description="Action ID")]
     type: Annotated[str, Field(description="Action type (e.g. updateCard)")]
     data: Annotated[TrelloActionData, Field(description="Action data")]
-    member_creator: Annotated[TrelloMember | None, Field(default=None, description="Who did it", alias="memberCreator")]
 
-    model_config = {"extra": "ignore", "populate_by_name": True}
+    model_config = {"extra": "ignore"}
 
 
 class TrelloWebhookPayload(BaseModel):

@@ -12,19 +12,9 @@ class CardOut(BaseModel):
     name: Annotated[str, Field(description="Card title")]
     desc: Annotated[str, Field(default="", description="Card description")]
     url: Annotated[str, Field(default="", description="Card URL")]
-    short_url: Annotated[str, Field(default="", description="Short URL", alias="shortUrl")]
     id_list: Annotated[str, Field(default="", description="Current list ID", alias="idList")]
 
     model_config = {"extra": "ignore", "populate_by_name": True}
-
-
-class ListOut(BaseModel):
-    """Trello list output."""
-
-    id: Annotated[str, Field(description="List ID")]
-    name: Annotated[str, Field(description="List name")]
-
-    model_config = {"extra": "ignore"}
 
 
 class WebhookOut(BaseModel):

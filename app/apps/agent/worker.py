@@ -11,7 +11,7 @@ from app.apps.git_manager.crud.create import clone_repo, create_branch
 from app.apps.git_manager.crud.update import commit_and_push, create_pr, pull_base
 from app.apps.git_manager.model.input import PRCreateIn
 from app.apps.trello.crud.read import get_card, get_card_actions
-from app.apps.trello.crud.update import add_comment, move_card, update_card_description
+from app.apps.trello.crud.update import add_comment, update_card
 from app.common.cost import cost_tracker
 from app.common.progress import ProgressTracker
 from app.core.config import BASE_DIR, BoardConfig, WorkerAgentConfig
@@ -240,7 +240,7 @@ class WorkerAgent(BaseAgent):
             return True
         elif mode == "update":
             if result_text:
-                await update_card_description(card_id, result_text)
+                await update_card(card_id, desc=result_text)
             if cost is not None:
                 await add_comment(card_id, f"Description updated. Cost: ${cost:.4f}")
             return True
@@ -261,7 +261,7 @@ class WorkerAgent(BaseAgent):
         if not has_changes:
             logger.warning("Worker %s: agent produced no changes for card '%s'", self.name, card.name)
             await add_comment(card_id, f"{FAIL_PREFIX} Agent completed but produced no code changes.")
-            await move_card(card_id, self.board.failed_list_id)
+            await update_card(card_id, id_list=self.board.failed_list_id)
             await tracker.finish(success=False, error="No code changes produced")
             return False
 
@@ -304,7 +304,7 @@ class WorkerAgent(BaseAgent):
 
         try:
             # 1. Move to doing
-            await move_card(card_id, self.config.lists.doing)
+            await update_card(card_id, id_list=self.config.lists.doing)
             await tracker.start()
 
             # 2. Setup repo (conditional on repo_access)
@@ -323,7 +323,7 @@ class WorkerAgent(BaseAgent):
 
             # 6. Move to done (if not already handled by deliver)
             if should_move_done:
-                await move_card(card_id, self.config.lists.done)
+                await update_card(card_id, id_list=self.config.lists.done)
                 if self.config.output_mode != "pr":
                     await tracker.finish(success=True, cost_usd=execution_cost)
                 logger.info("Worker %s completed card '%s'", self.name, card.name)
@@ -341,7 +341,7 @@ class WorkerAgent(BaseAgent):
                         f"{FAIL_PREFIX} {attempt_msg} (max retries reached). "
                         f"Agent {self.name} cannot process this card. Check server logs.",
                     )
-                    await move_card(card_id, self.board.failed_list_id)
+                    await update_card(card_id, id_list=self.board.failed_list_id)
                     logger.warning("Worker %s: card '%s' moved to Failed after %d attempts", self.name, card.name, failure_count)
                 else:
                     await add_comment(
@@ -350,6 +350,6 @@ class WorkerAgent(BaseAgent):
                         f"Agent {self.name} failed to process this card. Check server logs.",
                     )
                     self._processed_cards.discard(card_id)
-                    await move_card(card_id, self.config.lists.todo)
+                    await update_card(card_id, id_list=self.config.lists.todo)
             except Exception:
                 logger.exception("Failed to handle failure for card %s", card_id)
