@@ -82,10 +82,25 @@ class BoardConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_pipeline(self) -> "BoardConfig":
-        """Validate that next_stage references point to workers on this board."""
+        """Validate that next_stage references point to workers on this board and contain no cycles."""
         for name, worker in self.workers.items():
             if worker.next_stage and worker.next_stage not in self.workers:
                 raise ValueError(f"Worker '{name}' next_stage '{worker.next_stage}' not found on this board")
+
+        # Detect cycles via path traversal from each worker
+        visited: set[str] = set()
+        for name in self.workers:
+            path: list[str] = []
+            path_set: set[str] = set()
+            current: str | None = name
+            while current and current not in visited:
+                if current in path_set:
+                    cycle = " -> ".join(path[path.index(current):] + [current])
+                    raise ValueError(f"Pipeline cycle detected: {cycle}")
+                path.append(current)
+                path_set.add(current)
+                current = self.workers[current].next_stage
+            visited.update(path_set)
         return self
 
 
@@ -138,13 +153,14 @@ class Settings(BaseSettings):
     github_token: Annotated[str, Field(min_length=1, description="GitHub personal access token")]
 
     # Topology — loaded from config.json
+    config_json_path: Annotated[str, Field(default="", description="Path to config.json (default: BASE_DIR/config.json)")]
     boards: Annotated[dict[str, BoardConfig], Field(default_factory=dict, description="Board configurations")]
     orchestrator: Annotated[OrchestratorAgentConfig | None, Field(default=None, description="Orchestrator configuration")]
 
     def model_post_init(self, __context: object) -> None:
-        """Load topology from config.json after env is loaded."""
+        """Load topology from config.json after env is loaded, then validate cross-board constraints."""
         if not self.boards and not self.orchestrator:
-            config_path = BASE_DIR / "config.json"
+            config_path = Path(self.config_json_path) if self.config_json_path else BASE_DIR / "config.json"
             if config_path.exists():
                 with open(config_path) as f:
                     data = json.load(f)
@@ -166,8 +182,12 @@ class Settings(BaseSettings):
             else:
                 logger.warning("config.json not found at %s", config_path)
 
-    @model_validator(mode="after")
-    def _validate_unique_worker_names(self) -> "Settings":
+        # Validate after boards are loaded (model_validator runs before model_post_init,
+        # so cross-board checks must live here)
+        self._check_unique_worker_names()
+        self._check_unique_label_ids()
+
+    def _check_unique_worker_names(self) -> None:
         """Enforce unique worker names across all boards."""
         seen: dict[str, str] = {}
         for board_name, board in self.boards.items():
@@ -178,7 +198,18 @@ class Settings(BaseSettings):
                         f"'{seen[worker_name]}' and '{board_name}'"
                     )
                 seen[worker_name] = board_name
-        return self
+
+    def _check_unique_label_ids(self) -> None:
+        """Enforce unique label IDs across all workers."""
+        seen: dict[str, str] = {}
+        for board_name, board in self.boards.items():
+            for worker_name, config in board.workers.items():
+                if config.label_id in seen:
+                    raise ValueError(
+                        f"Duplicate label_id '{config.label_id}' on worker '{worker_name}' "
+                        f"(board '{board_name}') — already used by worker '{seen[config.label_id]}'"
+                    )
+                seen[config.label_id] = worker_name
 
     @property
     def all_workers(self) -> dict[str, WorkerAgentConfig]:

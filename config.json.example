@@ -68,12 +68,12 @@
       "workers": {
         "researcher": {
           "label_id": "trello_label_id",
-          "next_stage": "critic",
+          "next_stage": "research_critic",
           "repo_access": "none",
           "output_mode": "update",
           "system_prompt": "You are a research agent. Gather and analyze information."
         },
-        "critic": {
+        "research_critic": {
           "label_id": "trello_label_id",
           "repo_access": "none",
           "output_mode": "update",

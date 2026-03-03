@@ -526,18 +526,156 @@ class TestHandleDoneEvent:
         assert "Unblocked" in msg
 
 
+# --- _resolve_worker_from_labels ---
+
+
+class TestResolveWorkerFromLabels:
+    async def test_resolves_worker_and_board(self, orchestrator_config):
+        """Resolves worker name and board name from card labels."""
+        orch = OrchestratorAgent("orchestrator", orchestrator_config)
+        card = make_card(card_id="card_xyz", id_labels=["lbl_api"])
+
+        mock_board = MagicMock()
+        mock_worker = MagicMock()
+        mock_worker.label_id = "lbl_api"
+        mock_board.workers = {"api": mock_worker}
+
+        with patch("app.apps.agent.orchestrator.get_card", new_callable=AsyncMock, return_value=card), \
+             patch("app.apps.agent.orchestrator.settings") as mock_settings:
+            mock_settings.boards = {"backend": mock_board}
+            worker, board = await orch._resolve_worker_from_labels("card_xyz")
+
+        assert worker == "api"
+        assert board == "backend"
+
+    async def test_returns_nones_for_unknown_label(self, orchestrator_config):
+        """Returns (None, None) when no worker matches the card's labels."""
+        orch = OrchestratorAgent("orchestrator", orchestrator_config)
+        card = make_card(card_id="card_xyz", id_labels=["lbl_unknown"])
+
+        mock_board = MagicMock()
+        mock_worker = MagicMock()
+        mock_worker.label_id = "lbl_api"
+        mock_board.workers = {"api": mock_worker}
+
+        with patch("app.apps.agent.orchestrator.get_card", new_callable=AsyncMock, return_value=card), \
+             patch("app.apps.agent.orchestrator.settings") as mock_settings:
+            mock_settings.boards = {"backend": mock_board}
+            worker, board = await orch._resolve_worker_from_labels("card_xyz")
+
+        assert worker is None
+        assert board is None
+
+    async def test_returns_nones_on_api_error(self, orchestrator_config):
+        """Returns (None, None) when Trello API fails."""
+        orch = OrchestratorAgent("orchestrator", orchestrator_config)
+
+        with patch("app.apps.agent.orchestrator.get_card", new_callable=AsyncMock, side_effect=RuntimeError("API down")):
+            worker, board = await orch._resolve_worker_from_labels("card_xyz")
+
+        assert worker is None
+        assert board is None
+
+
+# --- _extract_failure_reason ---
+
+
+class TestExtractFailureReason:
+    async def test_extracts_latest_reason(self, orchestrator_config):
+        """Extracts text after FAIL_PREFIX from the most recent fail comment."""
+        orch = OrchestratorAgent("orchestrator", orchestrator_config)
+        actions = [
+            {"data": {"text": "[karavan:fail] Attempt 3/3 failed (max retries reached). Agent api cannot process this card."}},
+            {"data": {"text": "[karavan:fail] Attempt 2/3 failed, will retry."}},
+        ]
+
+        with patch("app.apps.agent.orchestrator.get_card_actions", new_callable=AsyncMock, return_value=actions):
+            reason = await orch._extract_failure_reason("card_xyz")
+
+        assert "Attempt 3/3 failed" in reason
+        assert "max retries reached" in reason
+
+    async def test_returns_none_when_no_fail_comments(self, orchestrator_config):
+        """Returns None when card has no [karavan:fail] comments."""
+        orch = OrchestratorAgent("orchestrator", orchestrator_config)
+        actions = [{"data": {"text": "PR opened: https://github.com/..."}}]
+
+        with patch("app.apps.agent.orchestrator.get_card_actions", new_callable=AsyncMock, return_value=actions):
+            reason = await orch._extract_failure_reason("card_xyz")
+
+        assert reason is None
+
+    async def test_returns_none_on_api_error(self, orchestrator_config):
+        """Returns None when Trello API fails."""
+        orch = OrchestratorAgent("orchestrator", orchestrator_config)
+
+        with patch("app.apps.agent.orchestrator.get_card_actions", new_callable=AsyncMock, side_effect=RuntimeError("API down")):
+            reason = await orch._extract_failure_reason("card_xyz")
+
+        assert reason is None
+
+
 # --- _handle_failed_event ---
 
 
 class TestHandleFailedEvent:
-    async def test_notifies_failure(self, orchestrator_config):
-        """Sends failure notification via Telegram."""
+    async def test_includes_board_worker_and_reason(self, orchestrator_config):
+        """Notification includes board, worker name, and failure reason."""
         orch = OrchestratorAgent("orchestrator", orchestrator_config)
         event = {"card_name": "Broken task", "card_id": "card_xyz"}
+
+        with patch.object(orch, "_resolve_worker_from_labels", new_callable=AsyncMock, return_value=("api", "backend")), \
+             patch.object(orch, "_extract_failure_reason", new_callable=AsyncMock, return_value="Attempt 3/3 failed (max retries reached). Agent api cannot process this card."), \
+             patch.object(orch, "_notify_chats", new_callable=AsyncMock) as mock_notify:
+            await orch._handle_failed_event(event)
+
+        msg = mock_notify.call_args[0][0]
+        assert "Card failed: Broken task" in msg
+        assert "Board: backend" in msg
+        assert "Worker: api" in msg
+        assert "Attempt 3/3 failed" in msg
+
+    async def test_no_card_id_sends_basic_notification(self, orchestrator_config):
+        """Without card_id, sends card-name-only notification."""
+        orch = OrchestratorAgent("orchestrator", orchestrator_config)
+        event = {"card_name": "Broken task", "card_id": ""}
 
         with patch.object(orch, "_notify_chats", new_callable=AsyncMock) as mock_notify:
             await orch._handle_failed_event(event)
 
         msg = mock_notify.call_args[0][0]
-        assert "Broken task" in msg
-        assert "failed" in msg.lower()
+        assert "Card failed: Broken task" in msg
+        assert "Board" not in msg
+        assert "Worker" not in msg
+        assert "Reason" not in msg
+
+    async def test_api_errors_still_notify(self, orchestrator_config):
+        """If worker/reason resolution fails, still sends notification with card name."""
+        orch = OrchestratorAgent("orchestrator", orchestrator_config)
+        event = {"card_name": "Broken task", "card_id": "card_xyz"}
+
+        with patch.object(orch, "_resolve_worker_from_labels", new_callable=AsyncMock, return_value=(None, None)), \
+             patch.object(orch, "_extract_failure_reason", new_callable=AsyncMock, return_value=None), \
+             patch.object(orch, "_notify_chats", new_callable=AsyncMock) as mock_notify:
+            await orch._handle_failed_event(event)
+
+        msg = mock_notify.call_args[0][0]
+        assert "Card failed: Broken task" in msg
+        assert "Board" not in msg
+        assert "Worker" not in msg
+        assert "Reason" not in msg
+
+    async def test_worker_without_reason(self, orchestrator_config):
+        """Includes board and worker name even when failure reason is unavailable."""
+        orch = OrchestratorAgent("orchestrator", orchestrator_config)
+        event = {"card_name": "Broken task", "card_id": "card_xyz"}
+
+        with patch.object(orch, "_resolve_worker_from_labels", new_callable=AsyncMock, return_value=("api", "backend")), \
+             patch.object(orch, "_extract_failure_reason", new_callable=AsyncMock, return_value=None), \
+             patch.object(orch, "_notify_chats", new_callable=AsyncMock) as mock_notify:
+            await orch._handle_failed_event(event)
+
+        msg = mock_notify.call_args[0][0]
+        assert "Board: backend" in msg
+        assert "Worker: api" in msg
+        assert "Reason" not in msg

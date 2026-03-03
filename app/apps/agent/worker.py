@@ -1,5 +1,6 @@
 """WorkerAgent — picks up Trello cards and executes them based on configurable behavior axes."""
 
+import contextlib
 import logging
 import re
 
@@ -316,8 +317,8 @@ class WorkerAgent(BaseAgent):
             return
 
         if self.config.label_id not in card.id_labels:
-            logger.info(
-                "Worker %s skipping card '%s' — label not present",
+            logger.warning(
+                "Worker %s skipping card '%s' — label removed before pickup",
                 self.name, card.name,
             )
             return
@@ -351,46 +352,86 @@ class WorkerAgent(BaseAgent):
 
             # 6. Move to done or pipeline next stage
             if should_move_done:
-                if self.config.next_stage:
-                    # Pipeline continues — swap label, move back to todo
-                    next_worker = self.board.workers[self.config.next_stage]
-                    await update_card(card_id, id_list=self.board.lists.todo)
-                    await remove_label(card_id, self.config.label_id)
-                    await add_label(card_id, next_worker.label_id)
-                else:
-                    # Terminal stage — remove label, move to done
-                    await remove_label(card_id, self.config.label_id)
-                    await update_card(card_id, id_list=self.board.lists.done)
                 if self.config.output_mode != "pr":
                     await tracker.finish(success=True, cost_usd=execution_cost)
-                logger.info("Worker %s completed card '%s'", self.name, card.name)
+                await self._transition_card(card_id, card.name)
 
         except Exception:
             logger.exception("Worker %s failed on card '%s'", self.name, card.name)
             await tracker.finish(success=False, error="Agent execution failed")
-            try:
-                failure_count = await self._count_failures(card_id) + 1
-                attempt_msg = f"Attempt {failure_count}/{MAX_RETRIES} failed"
-
-                if failure_count >= MAX_RETRIES:
-                    await add_comment(
-                        card_id,
-                        f"{FAIL_PREFIX} {attempt_msg} (max retries reached). "
-                        f"Agent {self.name} cannot process this card. Check server logs.",
-                    )
-                    await update_card(card_id, id_list=self.board.failed_list_id)
-                    logger.warning("Worker %s: card '%s' moved to Failed after %d attempts", self.name, card.name, failure_count)
-                else:
-                    await add_comment(
-                        card_id,
-                        f"{FAIL_PREFIX} {attempt_msg}, will retry. "
-                        f"Agent {self.name} failed to process this card. Check server logs.",
-                    )
-                    self._processed_cards.discard(card_id)
-                    await update_card(card_id, id_list=self.board.lists.todo)
-                    await remove_label(card_id, self.config.label_id)
-                    await add_label(card_id, self.config.label_id)
-            except Exception:
-                logger.exception("Failed to handle failure for card %s", card_id)
+            await self._handle_failure(card_id, card.name)
         finally:
             self._current_card_id = None
+
+    async def _transition_card(self, card_id: str, card_name: str) -> None:
+        """Move card to done or hand off to next pipeline stage."""
+        try:
+            if self.config.next_stage:
+                next_worker = self.board.workers[self.config.next_stage]
+                await update_card(card_id, id_list=self.board.lists.todo)
+                await remove_label(card_id, self.config.label_id)
+                try:
+                    await add_label(card_id, next_worker.label_id)
+                except Exception:
+                    # Re-add our own label so the card isn't orphaned without any label
+                    with contextlib.suppress(Exception):
+                        await add_label(card_id, self.config.label_id)
+                    raise
+            else:
+                # Terminal: move to done first, then clean up label.
+                # A card in done with a stale label is harmless;
+                # a card in todo with no label is orphaned.
+                await update_card(card_id, id_list=self.board.lists.done)
+                with contextlib.suppress(Exception):
+                    await remove_label(card_id, self.config.label_id)
+            logger.info("Worker %s completed card '%s'", self.name, card_name)
+        except Exception:
+            # Output was already delivered — don't re-run the card, just flag for manual review
+            logger.exception(
+                "Worker %s: card transition failed after successful delivery for '%s'",
+                self.name, card_name,
+            )
+            with contextlib.suppress(Exception):
+                await add_comment(
+                    card_id,
+                    f"{FAIL_PREFIX} Output was delivered successfully but the card could not be "
+                    f"moved to the next stage. Manual intervention needed.",
+                )
+
+    async def _handle_failure(self, card_id: str, card_name: str) -> None:
+        """Handle a card execution failure — retry or move to failed list."""
+        try:
+            failure_count = await self._count_failures(card_id) + 1
+            attempt_msg = f"Attempt {failure_count}/{MAX_RETRIES} failed"
+
+            if failure_count >= MAX_RETRIES:
+                await add_comment(
+                    card_id,
+                    f"{FAIL_PREFIX} {attempt_msg} (max retries reached). "
+                    f"Agent {self.name} cannot process this card. Check server logs.",
+                )
+                await update_card(card_id, id_list=self.board.failed_list_id)
+                logger.warning("Worker %s: card '%s' moved to Failed after %d attempts", self.name, card_name, failure_count)
+            else:
+                await add_comment(
+                    card_id,
+                    f"{FAIL_PREFIX} {attempt_msg}, will retry. "
+                    f"Agent {self.name} failed to process this card. Check server logs.",
+                )
+                self._processed_cards.discard(card_id)
+                await update_card(card_id, id_list=self.board.lists.todo)
+                await remove_label(card_id, self.config.label_id)
+                try:
+                    await add_label(card_id, self.config.label_id)
+                except Exception:
+                    logger.exception(
+                        "Worker %s: re-add label failed for card %s, card may be orphaned",
+                        self.name, card_id,
+                    )
+                    with contextlib.suppress(Exception):
+                        await add_comment(
+                            card_id,
+                            f"{FAIL_PREFIX} Retry label re-add failed. Manual re-label needed.",
+                        )
+        except Exception:
+            logger.exception("Failed to handle failure for card %s", card_id)

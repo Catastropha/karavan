@@ -9,6 +9,7 @@ from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
 from app.apps.agent.base import BaseAgent
 from app.apps.agent.tools import MCP_TOOL_NAMES, build_mcp_server
+from app.apps.agent.worker import FAIL_PREFIX
 from app.apps.bot.crud.create import send_message, send_typing_action
 from app.apps.bot.markdown import escape_markdown_v2
 from app.apps.git_manager.crud.create import clone_repo
@@ -273,9 +274,50 @@ class OrchestratorAgent(BaseAgent):
 
         await self._notify_chats("\n".join(parts))
 
+    async def _resolve_worker_from_labels(self, card_id: str) -> tuple[str | None, str | None]:
+        """Fetch a card and resolve the worker and board name from its labels."""
+        try:
+            card = await get_card(card_id)
+            for board_name, board in settings.boards.items():
+                for worker_name, wcfg in board.workers.items():
+                    if wcfg.label_id in card.id_labels:
+                        return worker_name, board_name
+        except Exception:
+            logger.warning("Failed to resolve worker from card %s labels", card_id)
+        return None, None
+
+    async def _extract_failure_reason(self, card_id: str) -> str | None:
+        """Extract the latest failure reason from card comments."""
+        try:
+            actions = await get_card_actions(card_id)
+            for action in actions:
+                text = action.get("data", {}).get("text", "")
+                if text.startswith(FAIL_PREFIX):
+                    return text.removeprefix(FAIL_PREFIX).strip()
+        except Exception:
+            logger.warning("Failed to fetch failure reason for card %s", card_id)
+        return None
+
     async def _handle_failed_event(self, event: dict) -> None:
-        """Handle a card-moved-to-failed webhook event — notify user via Telegram."""
+        """Handle a card-moved-to-failed webhook event — notify user with worker and failure reason."""
         card_name = event.get("card_name", "Unknown card")
         card_id = event.get("card_id", "")
         logger.info("Orchestrator %s: card '%s' (%s) moved to failed", self.name, card_name, card_id)
-        await self._notify_chats(f"Card failed: {card_name} — check card comments for details.")
+
+        worker_name: str | None = None
+        board_name: str | None = None
+        failure_reason: str | None = None
+
+        if card_id:
+            worker_name, board_name = await self._resolve_worker_from_labels(card_id)
+            failure_reason = await self._extract_failure_reason(card_id)
+
+        parts = [f"Card failed: {card_name}"]
+        if board_name:
+            parts.append(f"Board: {board_name}")
+        if worker_name:
+            parts.append(f"Worker: {worker_name}")
+        if failure_reason:
+            parts.append(f"Reason: {failure_reason}")
+
+        await self._notify_chats("\n".join(parts))
