@@ -351,13 +351,20 @@ class TestFindUnblockedCards:
             card_id=waiting_id,
             desc=f"## Dependencies\n- Requires: {completed_id} (api) to be in Done\n",
             id_list="todo_list_id",
+            id_labels=["lbl_api"],
         )
         completed_dep = make_card(card_id=completed_id, id_list="done_list_id")
+
+        mock_board = MagicMock()
+        mock_board.lists.todo = "todo_list_id"
+        mock_worker = MagicMock()
+        mock_worker.label_id = "lbl_api"
+        mock_board.workers = {"api": mock_worker}
 
         with patch("app.apps.agent.orchestrator.settings") as mock_settings, \
              patch("app.apps.agent.orchestrator.get_list_cards", new_callable=AsyncMock, return_value=[dep_card]), \
              patch("app.apps.agent.orchestrator.get_card", new_callable=AsyncMock, return_value=completed_dep):
-            mock_settings.all_workers = {"api": MagicMock(lists=MagicMock(todo="todo_list_id"))}
+            mock_settings.boards = {"main": mock_board}
             mock_settings.done_list_ids = {"done_list_id"}
             unblocked = await orch._find_unblocked_cards(completed_id)
 
@@ -381,6 +388,7 @@ class TestFindUnblockedCards:
                 f"- Requires: {doing_id} (api)\n"
             ),
             id_list="todo_list_id",
+            id_labels=["lbl_api"],
         )
         done_card = make_card(card_id=done_id, id_list="done_list_id")
         doing_card = make_card(card_id=doing_id, id_list="doing_list_id")
@@ -390,10 +398,14 @@ class TestFindUnblockedCards:
                 return done_card
             return doing_card
 
+        mock_board = MagicMock()
+        mock_board.lists.todo = "todo_list_id"
+        mock_board.workers = {"api": MagicMock(label_id="lbl_api")}
+
         with patch("app.apps.agent.orchestrator.settings") as mock_settings, \
              patch("app.apps.agent.orchestrator.get_list_cards", new_callable=AsyncMock, return_value=[dep_card]), \
              patch("app.apps.agent.orchestrator.get_card", new_callable=AsyncMock, side_effect=mock_get_card):
-            mock_settings.all_workers = {"api": MagicMock(lists=MagicMock(todo="todo_list_id"))}
+            mock_settings.boards = {"main": mock_board}
             mock_settings.done_list_ids = {"done_list_id"}
             unblocked = await orch._find_unblocked_cards(done_id)
 
@@ -413,9 +425,13 @@ class TestFindUnblockedCards:
             id_list="todo_list_id",
         )
 
+        mock_board = MagicMock()
+        mock_board.lists.todo = "todo_list_id"
+        mock_board.workers = {"api": MagicMock(label_id="lbl_api")}
+
         with patch("app.apps.agent.orchestrator.settings") as mock_settings, \
              patch("app.apps.agent.orchestrator.get_list_cards", new_callable=AsyncMock, return_value=[dep_card]):
-            mock_settings.all_workers = {"api": MagicMock(lists=MagicMock(todo="todo_list_id"))}
+            mock_settings.boards = {"main": mock_board}
             unblocked = await orch._find_unblocked_cards(completed_id)
 
         assert len(unblocked) == 0

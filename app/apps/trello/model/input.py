@@ -26,11 +26,22 @@ class TrelloCardRef(BaseModel):
     model_config = {"extra": "ignore"}
 
 
+class TrelloLabel(BaseModel):
+    """Label reference in a Trello webhook action."""
+
+    id: Annotated[str, Field(description="Label ID")]
+    name: Annotated[str, Field(default="", description="Label name")]
+    color: Annotated[str, Field(default="", description="Label color")]
+
+    model_config = {"extra": "ignore"}
+
+
 class TrelloActionData(BaseModel):
     """Data payload within a Trello webhook action."""
 
     card: Annotated[TrelloCardRef | None, Field(default=None, description="Card reference")]
     list_after: Annotated[TrelloList | None, Field(default=None, description="New list", alias="listAfter")]
+    label: Annotated[TrelloLabel | None, Field(default=None, description="Label (for addLabelToCard events)")]
 
     model_config = {"extra": "ignore", "populate_by_name": True}
 

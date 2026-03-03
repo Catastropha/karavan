@@ -13,6 +13,17 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
+def _resolve_prompt(value: str) -> str:
+    """Resolve a system prompt value — load from file if prefixed with ``@``."""
+    if not value.startswith("@"):
+        return value
+    path = BASE_DIR / value[1:]
+    try:
+        return path.read_text().strip()
+    except FileNotFoundError:
+        raise ValueError(f"System prompt file not found: {path}")
+
+
 # --- Agent topology models (loaded from config.json) ---
 
 
@@ -27,11 +38,12 @@ class WorkerListsConfig(BaseModel):
 class WorkerAgentConfig(BaseModel):
     """Configuration for a worker agent."""
 
-    lists: Annotated[WorkerListsConfig, Field(description="Trello list IDs")]
+    label_id: Annotated[str, Field(min_length=1, description="Trello label ID that routes cards to this worker")]
+    next_stage: Annotated[str | None, Field(default=None, description="Worker name for the next pipeline stage (None = terminal)")]
     repo: Annotated[str, Field(default="", description="Git repo SSH URL (required when repo_access is 'write')")]
     branch_prefix: Annotated[str, Field(default="", description="Branch prefix (required when repo_access is 'write')")]
     base_branch: Annotated[str, Field(default="main", description="Base branch to pull and target PRs against")]
-    system_prompt: Annotated[str, Field(default="", description="System prompt for Claude")]
+    system_prompt: Annotated[str, Field(default="", description="System prompt for Claude (use @path/to/file.md to load from file)")]
     repo_access: Annotated[
         Literal["write", "read", "none"],
         Field(default="write", description="Repo access level: write (clone+branch+commit), read (clone for context), none (no repo)"),
@@ -47,7 +59,7 @@ class WorkerAgentConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_config_axes(self) -> "WorkerAgentConfig":
-        """Enforce cross-field constraints between repo_access, output_mode, repo, and branch_prefix."""
+        """Enforce cross-field constraints and resolve file-based system prompts."""
         if self.repo_access == "write":
             if not self.repo:
                 raise ValueError("repo is required when repo_access is 'write'")
@@ -55,6 +67,7 @@ class WorkerAgentConfig(BaseModel):
                 raise ValueError("branch_prefix is required when repo_access is 'write'")
         if self.output_mode == "pr" and self.repo_access != "write":
             raise ValueError("output_mode 'pr' requires repo_access 'write'")
+        self.system_prompt = _resolve_prompt(self.system_prompt)
         return self
 
 
@@ -62,8 +75,18 @@ class BoardConfig(BaseModel):
     """Configuration for a Trello board containing workers."""
 
     board_id: Annotated[str, Field(min_length=1, description="Trello board ID")]
+    description: Annotated[str, Field(default="", description="Human-readable purpose of this board, shown to orchestrator and agents")]
     failed_list_id: Annotated[str, Field(min_length=1, description="Trello list ID for failed cards")]
+    lists: Annotated[WorkerListsConfig, Field(description="Shared Trello list IDs (todo/doing/done)")]
     workers: Annotated[dict[str, WorkerAgentConfig], Field(default_factory=dict, description="Worker agents on this board")]
+
+    @model_validator(mode="after")
+    def _validate_pipeline(self) -> "BoardConfig":
+        """Validate that next_stage references point to workers on this board."""
+        for name, worker in self.workers.items():
+            if worker.next_stage and worker.next_stage not in self.workers:
+                raise ValueError(f"Worker '{name}' next_stage '{worker.next_stage}' not found on this board")
+        return self
 
 
 class OrchestratorAgentConfig(BaseModel):
@@ -71,7 +94,17 @@ class OrchestratorAgentConfig(BaseModel):
 
     repos: Annotated[list[str], Field(min_length=1, description="Git repo SSH URLs for read access")]
     base_branch: Annotated[str, Field(default="main", description="Base branch to pull from repos")]
-    system_prompt: Annotated[str, Field(default="", description="System prompt for Claude")]
+    system_prompt: Annotated[str, Field(default="", description="System prompt for Claude (use @path/to/file.md to load from file)")]
+    allowed_tools: Annotated[
+        list[str],
+        Field(default_factory=lambda: ["Read", "Glob", "Grep", "WebSearch", "WebFetch"], description="SDK tools available to the orchestrator (MCP tools are always added)"),
+    ]
+
+    @model_validator(mode="after")
+    def _resolve_system_prompt(self) -> "OrchestratorAgentConfig":
+        """Resolve file-based system prompt."""
+        self.system_prompt = _resolve_prompt(self.system_prompt)
+        return self
 
 
 # --- Main settings ---
@@ -158,19 +191,24 @@ class Settings(BaseSettings):
     @property
     def done_list_ids(self) -> set[str]:
         """Return all known 'done' list IDs across all boards."""
-        return {config.lists.done for config in self.all_workers.values()}
+        return {board.lists.done for board in self.boards.values()}
 
     @property
     def all_failed_list_ids(self) -> set[str]:
         """Return all failed list IDs across all boards."""
         return {board.failed_list_id for board in self.boards.values()}
 
-    def failed_list_for_worker(self, name: str) -> str | None:
-        """Return the failed list ID for the board containing the named worker."""
+    def board_for_worker(self, name: str) -> BoardConfig | None:
+        """Look up the board containing the named worker."""
         for board in self.boards.values():
             if name in board.workers:
-                return board.failed_list_id
+                return board
         return None
+
+    def failed_list_for_worker(self, name: str) -> str | None:
+        """Return the failed list ID for the board containing the named worker."""
+        board = self.board_for_worker(name)
+        return board.failed_list_id if board else None
 
 
 settings = Settings()

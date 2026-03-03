@@ -2,61 +2,82 @@
   "boards": {
     "backend": {
       "board_id": "trello_board_id",
+      "description": "Backend API services — FastAPI endpoints, database models, business logic",
       "failed_list_id": "trello_list_id",
+      "lists": {
+        "todo": "trello_list_id",
+        "doing": "trello_list_id",
+        "done": "trello_list_id"
+      },
       "workers": {
         "api": {
-          "lists": {
-            "todo": "trello_list_id",
-            "doing": "trello_list_id",
-            "done": "trello_list_id"
-          },
+          "label_id": "trello_label_id",
           "repo": "git@github.com:user/myproject-api.git",
           "branch_prefix": "agent/api",
           "base_branch": "main",
-          "system_prompt": "You are a FastAPI backend developer. Follow existing patterns in the codebase."
+          "system_prompt": "@prompts/api.md"
         },
         "reviewer": {
+          "label_id": "trello_label_id",
           "repo_access": "read",
           "output_mode": "comment",
           "allowed_tools": ["Read", "Glob", "Grep"],
-          "lists": {
-            "todo": "trello_list_id",
-            "doing": "trello_list_id",
-            "done": "trello_list_id"
-          },
           "repo": "git@github.com:user/myproject-api.git",
           "base_branch": "main",
-          "system_prompt": "You are a code reviewer. Analyze the code and provide detailed feedback."
+          "system_prompt": "@prompts/reviewer.md"
         }
       }
     },
     "frontend": {
       "board_id": "trello_board_id",
+      "description": "Frontend UI — React components, pages, styling, client-side logic",
       "failed_list_id": "trello_list_id",
+      "lists": {
+        "todo": "trello_list_id",
+        "doing": "trello_list_id",
+        "done": "trello_list_id"
+      },
       "workers": {
         "static": {
-          "lists": {
-            "todo": "trello_list_id",
-            "doing": "trello_list_id",
-            "done": "trello_list_id"
-          },
+          "label_id": "trello_label_id",
           "repo": "git@github.com:user/myproject-static.git",
           "branch_prefix": "agent/static",
           "base_branch": "main",
-          "system_prompt": "You are a frontend developer. Use the existing component library."
+          "system_prompt": "@prompts/static.md"
         },
         "critic": {
+          "label_id": "trello_label_id",
           "repo_access": "read",
           "output_mode": "comment",
           "allowed_tools": ["Read", "Glob", "Grep"],
-          "lists": {
-            "todo": "trello_list_id",
-            "doing": "trello_list_id",
-            "done": "trello_list_id"
-          },
           "repo": "git@github.com:user/myproject-static.git",
           "base_branch": "main",
-          "system_prompt": "You are a frontend architecture critic. Evaluate component design, accessibility, performance patterns, and consistency with the design system."
+          "system_prompt": "@prompts/critic.md"
+        }
+      }
+    },
+    "research": {
+      "board_id": "trello_board_id",
+      "description": "Research pipeline — gather, critique, synthesize",
+      "failed_list_id": "trello_list_id",
+      "lists": {
+        "todo": "trello_list_id",
+        "doing": "trello_list_id",
+        "done": "trello_list_id"
+      },
+      "workers": {
+        "researcher": {
+          "label_id": "trello_label_id",
+          "next_stage": "critic",
+          "repo_access": "none",
+          "output_mode": "update",
+          "system_prompt": "You are a research agent. Gather and analyze information."
+        },
+        "critic": {
+          "label_id": "trello_label_id",
+          "repo_access": "none",
+          "output_mode": "update",
+          "system_prompt": "You are a critic. Evaluate and refine research output."
         }
       }
     }
@@ -67,6 +88,6 @@
       "git@github.com:user/myproject-static.git"
     ],
     "base_branch": "main",
-    "system_prompt": "You are an engineering lead. Break features into clear tasks for worker agents."
+    "system_prompt": "@prompts/orchestrator.md"
   }
 }

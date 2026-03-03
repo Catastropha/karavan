@@ -14,7 +14,27 @@ from tests.hook.conftest import sign_payload
 # --- Helpers ---
 
 
-VALID_PAYLOAD = {
+LABEL_PAYLOAD = {
+    "action": {
+        "type": "addLabelToCard",
+        "data": {
+            "card": {"id": "card_abc", "name": "Fix login bug"},
+            "label": {"id": "lbl_api", "name": "api", "color": "green"},
+        },
+    },
+}
+
+DONE_PAYLOAD = {
+    "action": {
+        "type": "updateCard",
+        "data": {
+            "card": {"id": "card_abc", "name": "Fix login bug"},
+            "listAfter": {"id": "done_list_1", "name": "Done"},
+        },
+    },
+}
+
+UPDATE_PAYLOAD = {
     "action": {
         "type": "updateCard",
         "data": {
@@ -25,17 +45,15 @@ VALID_PAYLOAD = {
 }
 
 
-def _make_request(body: bytes, agent_name: str = "api", signature: str | None = None) -> MagicMock:
+def _make_request(body: bytes, board_name: str = "main", signature: str | None = None) -> MagicMock:
     """Build a mock FastAPI Request with body and headers."""
     request = MagicMock()
-    request.body = MagicMock(return_value=body)
-    # Make body() awaitable
+    callback_url = f"https://test.example.com/webhook/{board_name}"
+    if signature is None:
+        signature = sign_payload(body, callback_url)
     async def async_body():
         return body
     request.body = async_body
-    callback_url = f"https://test.example.com/webhook/{agent_name}"
-    if signature is None:
-        signature = sign_payload(body, callback_url)
     request.headers = {"x-trello-webhook": signature}
     return request
 
@@ -45,11 +63,11 @@ def _make_request(body: bytes, agent_name: str = "api", signature: str | None = 
 
 class TestTrelloWebhookVerify:
     async def test_returns_200(self):
-        response = await trello_webhook_verify("api")
+        response = await trello_webhook_verify("main")
         assert response.status_code == 200
 
-    async def test_any_agent_name(self):
-        response = await trello_webhook_verify("some-unknown-agent")
+    async def test_any_board_name(self):
+        response = await trello_webhook_verify("some-unknown-board")
         assert response.status_code == 200
 
 
@@ -57,56 +75,83 @@ class TestTrelloWebhookVerify:
 
 
 class TestTrelloWebhook:
-    async def test_queues_valid_event(self, agent_registry, mock_agent):
-        """Valid signed payload with matching agent queues the event."""
+    async def test_queues_label_event_for_worker(self, agent_registry, mock_agent):
+        """addLabelToCard with matching label routes to the correct worker."""
         agent_registry.get_agent.return_value = mock_agent
-        body = json.dumps(VALID_PAYLOAD).encode()
-        request = _make_request(body, agent_name="api")
+        body = json.dumps(LABEL_PAYLOAD).encode()
+        request = _make_request(body, board_name="main")
 
-        result = await trello_webhook("api", request)
+        result = await trello_webhook("main", request)
 
         assert result.ok is True
         assert not mock_agent.queue.empty()
         item = mock_agent.queue.get_nowait()
         assert item["card_id"] == "card_abc"
         assert item["card_name"] == "Fix login bug"
+        assert item["action_type"] == "addLabelToCard"
+        assert item["label_id"] == "lbl_api"
+        agent_registry.get_agent.assert_called_once_with("api")
+
+    async def test_queues_done_event_for_orchestrator(self, agent_registry, mock_orchestrator):
+        """updateCard moving to done list routes to orchestrator."""
+        agent_registry.orchestrator = mock_orchestrator
+        body = json.dumps(DONE_PAYLOAD).encode()
+        request = _make_request(body, board_name="main")
+
+        result = await trello_webhook("main", request)
+
+        assert result.ok is True
+        assert not mock_orchestrator.queue.empty()
+        item = mock_orchestrator.queue.get_nowait()
+        assert item["card_id"] == "card_abc"
         assert item["action_type"] == "updateCard"
-        assert item["list_after_id"] == "todo_list_1"
+        assert item["list_after_id"] == "done_list_1"
+
+    async def test_ignores_update_to_non_done_list(self, agent_registry, mock_orchestrator):
+        """updateCard to a list that is not done/failed is ignored."""
+        agent_registry.orchestrator = mock_orchestrator
+        body = json.dumps(UPDATE_PAYLOAD).encode()
+        request = _make_request(body, board_name="main")
+
+        result = await trello_webhook("main", request)
+
+        assert result.ok is True
+        assert mock_orchestrator.queue.empty()
 
     async def test_returns_ok_on_invalid_signature(self, agent_registry):
         """Invalid signature still returns ok (prevents Trello retries)."""
-        body = json.dumps(VALID_PAYLOAD).encode()
+        body = json.dumps(LABEL_PAYLOAD).encode()
         request = _make_request(body, signature="bad_signature")
 
-        result = await trello_webhook("api", request)
+        result = await trello_webhook("main", request)
 
         assert result.ok is True
         agent_registry.get_agent.assert_not_called()
 
     async def test_returns_ok_on_missing_signature(self, agent_registry):
         """Missing signature header still returns ok."""
-        body = json.dumps(VALID_PAYLOAD).encode()
+        body = json.dumps(LABEL_PAYLOAD).encode()
         request = MagicMock()
         async def async_body():
             return body
         request.body = async_body
         request.headers = {}
 
-        result = await trello_webhook("api", request)
+        result = await trello_webhook("main", request)
 
         assert result.ok is True
         agent_registry.get_agent.assert_not_called()
 
     async def test_returns_ok_on_empty_signature(self, agent_registry):
         """Empty signature string still returns ok."""
-        body = json.dumps(VALID_PAYLOAD).encode()
+        body = json.dumps(LABEL_PAYLOAD).encode()
         request = MagicMock()
         async def async_body():
             return body
         request.body = async_body
         request.headers = {"x-trello-webhook": ""}
 
-        result = await trello_webhook("api", request)
+        result = await trello_webhook("main", request)
 
         assert result.ok is True
         agent_registry.get_agent.assert_not_called()
@@ -114,121 +159,103 @@ class TestTrelloWebhook:
     async def test_returns_ok_on_malformed_json(self, agent_registry):
         """Malformed JSON body returns ok without crashing."""
         body = b"not valid json"
-        callback_url = "https://test.example.com/webhook/api"
+        callback_url = "https://test.example.com/webhook/main"
         sig = sign_payload(body, callback_url)
-        request = _make_request(body, agent_name="api", signature=sig)
+        request = _make_request(body, board_name="main", signature=sig)
 
-        result = await trello_webhook("api", request)
+        result = await trello_webhook("main", request)
 
         assert result.ok is True
 
-    async def test_returns_ok_when_no_card(self, agent_registry, mock_agent):
+    async def test_returns_ok_when_no_card(self, agent_registry):
         """Payload without card data returns ok without queuing."""
-        agent_registry.get_agent.return_value = mock_agent
         payload = {
             "action": {
-                "type": "updateCard",
-                "data": {"listAfter": {"id": "list1"}},
+                "type": "addLabelToCard",
+                "data": {"label": {"id": "lbl_api"}},
             },
         }
         body = json.dumps(payload).encode()
-        request = _make_request(body, agent_name="api")
+        request = _make_request(body, board_name="main")
 
-        result = await trello_webhook("api", request)
-
-        assert result.ok is True
-        assert mock_agent.queue.empty()
-
-    async def test_returns_ok_when_no_list_after(self, agent_registry, mock_agent):
-        """Payload without listAfter returns ok without queuing."""
-        agent_registry.get_agent.return_value = mock_agent
-        payload = {
-            "action": {
-                "type": "updateCard",
-                "data": {"card": {"id": "c1", "name": "Task"}},
-            },
-        }
-        body = json.dumps(payload).encode()
-        request = _make_request(body, agent_name="api")
-
-        result = await trello_webhook("api", request)
+        result = await trello_webhook("main", request)
 
         assert result.ok is True
-        assert mock_agent.queue.empty()
 
     async def test_returns_ok_when_registry_not_set(self):
         """No registry set returns ok (startup race condition)."""
         set_agent_registry(None)
-        body = json.dumps(VALID_PAYLOAD).encode()
-        request = _make_request(body, agent_name="api")
+        body = json.dumps(LABEL_PAYLOAD).encode()
+        request = _make_request(body, board_name="main")
 
-        result = await trello_webhook("api", request)
-
-        assert result.ok is True
-
-    async def test_returns_ok_when_agent_not_found(self, agent_registry):
-        """Unknown agent name returns ok without crashing."""
-        agent_registry.get_agent.return_value = None
-        body = json.dumps(VALID_PAYLOAD).encode()
-        request = _make_request(body, agent_name="unknown")
-
-        result = await trello_webhook("unknown", request)
+        result = await trello_webhook("main", request)
 
         assert result.ok is True
 
-    async def test_skips_when_should_not_process(self, agent_registry, mock_agent):
-        """Agent declines event via should_process_webhook — nothing queued."""
-        agent_registry.get_agent.return_value = mock_agent
-        mock_agent.should_process_webhook.return_value = False
-        body = json.dumps(VALID_PAYLOAD).encode()
-        request = _make_request(body, agent_name="api")
+    async def test_ignores_unknown_label(self, agent_registry):
+        """Label not mapped to any worker is silently ignored."""
+        payload = {
+            "action": {
+                "type": "addLabelToCard",
+                "data": {
+                    "card": {"id": "c1", "name": "Task"},
+                    "label": {"id": "lbl_unknown"},
+                },
+            },
+        }
+        body = json.dumps(payload).encode()
+        request = _make_request(body, board_name="main")
 
-        result = await trello_webhook("api", request)
+        result = await trello_webhook("main", request)
 
         assert result.ok is True
-        assert mock_agent.queue.empty()
-        mock_agent.should_process_webhook.assert_called_once_with("todo_list_1")
+        agent_registry.get_agent.assert_not_called()
 
-    async def test_calls_get_agent_with_name(self, agent_registry, mock_agent):
-        """Verifies the correct agent_name is passed to the registry."""
-        agent_registry.get_agent.return_value = mock_agent
-        body = json.dumps(VALID_PAYLOAD).encode()
-        request = _make_request(body, agent_name="reviewer")
+    async def test_ignores_label_event_without_label(self, agent_registry):
+        """addLabelToCard without label data is silently ignored."""
+        payload = {
+            "action": {
+                "type": "addLabelToCard",
+                "data": {
+                    "card": {"id": "c1", "name": "Task"},
+                },
+            },
+        }
+        body = json.dumps(payload).encode()
+        request = _make_request(body, board_name="main")
 
-        await trello_webhook("reviewer", request)
+        result = await trello_webhook("main", request)
 
-        agent_registry.get_agent.assert_called_once_with("reviewer")
+        assert result.ok is True
 
-    async def test_realistic_trello_payload(self, agent_registry, mock_agent):
-        """Parse a full realistic Trello webhook payload with extra fields."""
+    async def test_realistic_label_payload(self, agent_registry, mock_agent):
+        """Parse a full realistic Trello addLabelToCard payload with extra fields."""
         agent_registry.get_agent.return_value = mock_agent
         payload = {
             "action": {
                 "id": "action123",
                 "idMemberCreator": "member1",
-                "type": "updateCard",
+                "type": "addLabelToCard",
                 "date": "2026-01-15T10:30:00.000Z",
                 "data": {
                     "card": {"id": "c1", "name": "Deploy", "idShort": 42, "shortLink": "abc"},
-                    "listAfter": {"id": "todo_1", "name": "To Do"},
-                    "listBefore": {"id": "doing_1", "name": "Doing"},
+                    "label": {"id": "lbl_api", "name": "api", "color": "green"},
                     "board": {"id": "board1", "name": "Project"},
-                    "old": {"idList": "doing_1"},
                 },
             },
             "model": {"id": "board1"},
         }
         body = json.dumps(payload).encode()
-        request = _make_request(body, agent_name="api")
+        request = _make_request(body, board_name="main")
 
-        result = await trello_webhook("api", request)
+        result = await trello_webhook("main", request)
 
         assert result.ok is True
         item = mock_agent.queue.get_nowait()
         assert item["card_id"] == "c1"
         assert item["card_name"] == "Deploy"
-        assert item["list_after_id"] == "todo_1"
-        assert item["action_type"] == "updateCard"
+        assert item["label_id"] == "lbl_api"
+        assert item["action_type"] == "addLabelToCard"
 
 
 # --- health_check ---

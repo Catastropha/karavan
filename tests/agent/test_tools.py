@@ -7,7 +7,8 @@ import pytest
 
 from app.apps.agent.tools import (
     MCP_TOOL_NAMES,
-    _resolve_list_id,
+    _resolve_list,
+    _resolve_worker_from_labels,
     _text_result,
     _worker_not_found,
     build_mcp_server,
@@ -23,6 +24,29 @@ _list_workers = list_workers_tool.handler
 _create_trello_card = create_trello_card_tool.handler
 _get_card_status = get_card_status_tool.handler
 _get_worker_cards = get_worker_cards_tool.handler
+
+
+def _mock_board(workers: dict, lists: dict | None = None) -> MagicMock:
+    """Build a mock BoardConfig with shared lists and worker configs."""
+    board = MagicMock()
+    board.lists.todo = (lists or {}).get("todo", "todo_shared")
+    board.lists.doing = (lists or {}).get("doing", "doing_shared")
+    board.lists.done = (lists or {}).get("done", "done_shared")
+    board.description = "Test board"
+    board.workers = workers
+    return board
+
+
+def _mock_worker(label_id: str = "lbl_1", next_stage: str | None = None, **kwargs) -> MagicMock:
+    """Build a mock WorkerAgentConfig with label_id."""
+    worker = MagicMock()
+    worker.label_id = label_id
+    worker.next_stage = next_stage
+    worker.repo = kwargs.get("repo", "git@github.com:acme/app.git")
+    worker.repo_access = kwargs.get("repo_access", "write")
+    worker.output_mode = kwargs.get("output_mode", "pr")
+    worker.system_prompt = kwargs.get("system_prompt", "Test prompt")
+    return worker
 
 
 # --- _text_result ---
@@ -55,34 +79,55 @@ class TestWorkerNotFound:
         assert "frontend" in text
 
 
-# --- _resolve_list_id ---
+# --- _resolve_list ---
 
 
-class TestResolveListId:
+class TestResolveList:
     def test_resolves_todo_list(self):
+        board = _mock_board({}, {"todo": "todo_123", "doing": "doing_123", "done": "done_123"})
         with patch("app.apps.agent.tools.settings") as mock_settings:
-            mock_worker = MagicMock()
-            mock_worker.lists.todo = "todo_123"
-            mock_worker.lists.doing = "doing_123"
-            mock_worker.lists.done = "done_123"
-            mock_settings.all_workers = {"api": mock_worker}
-            result = _resolve_list_id("todo_123")
-        assert result == ("api", "todo")
+            mock_settings.boards = {"main": board}
+            result = _resolve_list("todo_123")
+        assert result == ("main", "todo")
 
     def test_resolves_done_list(self):
+        board = _mock_board({}, {"todo": "todo_123", "doing": "doing_123", "done": "done_123"})
         with patch("app.apps.agent.tools.settings") as mock_settings:
-            mock_worker = MagicMock()
-            mock_worker.lists.todo = "todo_123"
-            mock_worker.lists.doing = "doing_123"
-            mock_worker.lists.done = "done_123"
-            mock_settings.all_workers = {"api": mock_worker}
-            result = _resolve_list_id("done_123")
-        assert result == ("api", "done")
+            mock_settings.boards = {"main": board}
+            result = _resolve_list("done_123")
+        assert result == ("main", "done")
 
     def test_returns_none_for_unknown(self):
         with patch("app.apps.agent.tools.settings") as mock_settings:
-            mock_settings.all_workers = {}
-            result = _resolve_list_id("unknown_list")
+            mock_settings.boards = {}
+            result = _resolve_list("unknown_list")
+        assert result is None
+
+
+# --- _resolve_worker_from_labels ---
+
+
+class TestResolveWorkerFromLabels:
+    def test_resolves_worker_by_label(self):
+        worker = _mock_worker(label_id="lbl_api")
+        board = _mock_board({"api": worker})
+        with patch("app.apps.agent.tools.settings") as mock_settings:
+            mock_settings.boards = {"main": board}
+            result = _resolve_worker_from_labels(["lbl_api", "lbl_other"])
+        assert result == ("api", "main")
+
+    def test_returns_none_for_no_match(self):
+        worker = _mock_worker(label_id="lbl_api")
+        board = _mock_board({"api": worker})
+        with patch("app.apps.agent.tools.settings") as mock_settings:
+            mock_settings.boards = {"main": board}
+            result = _resolve_worker_from_labels(["lbl_unknown"])
+        assert result is None
+
+    def test_returns_none_for_empty_labels(self):
+        with patch("app.apps.agent.tools.settings") as mock_settings:
+            mock_settings.boards = {}
+            result = _resolve_worker_from_labels([])
         assert result is None
 
 
@@ -92,24 +137,19 @@ class TestResolveListId:
 class TestListWorkersTool:
     async def test_returns_all_workers(self):
         """Lists all worker agents with their configs."""
-        mock_worker = MagicMock()
-        mock_worker.repo = "git@github.com:acme/app.git"
-        mock_worker.repo_access = "write"
-        mock_worker.output_mode = "pr"
-        mock_worker.lists.todo = "t1"
-        mock_worker.lists.doing = "d1"
-        mock_worker.lists.done = "dn1"
-        mock_worker.system_prompt = "Test prompt"
+        worker = _mock_worker(label_id="lbl_api", next_stage=None)
+        board = _mock_board({"api": worker})
 
         with patch("app.apps.agent.tools.settings") as mock_settings:
-            mock_settings.boards = {"main": MagicMock(workers={"api": mock_worker})}
+            mock_settings.boards = {"main": board}
             result = await _list_workers({})
 
         data = json.loads(result["content"][0]["text"])
         assert len(data) == 1
         assert data[0]["name"] == "api"
-        assert data[0]["repo"] == "git@github.com:acme/app.git"
-        assert data[0]["lists"]["todo"] == "t1"
+        assert data[0]["label_id"] == "lbl_api"
+        assert data[0]["next_stage"] is None
+        assert data[0]["lists"]["todo"] == "todo_shared"
 
     async def test_no_workers(self):
         """Returns message when no workers are configured."""
@@ -123,10 +163,10 @@ class TestListWorkersTool:
 
 
 class TestCreateTrelloCardTool:
-    async def test_creates_card(self):
-        """Creates a card in the worker's todo list."""
-        mock_worker = MagicMock()
-        mock_worker.lists.todo = "todo_list_123"
+    async def test_creates_card_with_label(self):
+        """Creates a card in the board's todo list with worker's label."""
+        worker = _mock_worker(label_id="lbl_api")
+        board = _mock_board({"api": worker})
 
         mock_card = MagicMock()
         mock_card.id = "new_card_id"
@@ -134,8 +174,9 @@ class TestCreateTrelloCardTool:
         mock_card.url = "https://trello.com/c/new"
 
         with patch("app.apps.agent.tools.settings") as mock_settings, \
-             patch("app.apps.agent.tools.create_card", new_callable=AsyncMock, return_value=mock_card):
-            mock_settings.all_workers = {"api": mock_worker}
+             patch("app.apps.agent.tools.create_card", new_callable=AsyncMock, return_value=mock_card) as mock_create:
+            mock_settings.boards = {"main": board}
+            mock_settings.all_workers = {"api": worker}
             result = await _create_trello_card({
                 "name": "New task",
                 "description": "## Task\nDo something",
@@ -147,9 +188,15 @@ class TestCreateTrelloCardTool:
         assert data["card_id"] == "new_card_id"
         assert data["worker"] == "api"
 
+        # Verify create_card was called with board's todo list and worker's label
+        call_args = mock_create.call_args[0][0]
+        assert call_args.id_list == "todo_shared"
+        assert call_args.id_labels == ["lbl_api"]
+
     async def test_unknown_worker(self):
         """Returns error for unknown worker."""
         with patch("app.apps.agent.tools.settings") as mock_settings:
+            mock_settings.boards = {}
             mock_settings.all_workers = {}
             result = await _create_trello_card({
                 "name": "Task",
@@ -161,12 +208,13 @@ class TestCreateTrelloCardTool:
 
     async def test_trello_api_error(self):
         """Returns error result on Trello API failure."""
-        mock_worker = MagicMock()
-        mock_worker.lists.todo = "todo_list_123"
+        worker = _mock_worker(label_id="lbl_api")
+        board = _mock_board({"api": worker})
 
         with patch("app.apps.agent.tools.settings") as mock_settings, \
              patch("app.apps.agent.tools.create_card", new_callable=AsyncMock, side_effect=RuntimeError("API error")):
-            mock_settings.all_workers = {"api": mock_worker}
+            mock_settings.boards = {"main": board}
+            mock_settings.all_workers = {"api": worker}
             result = await _create_trello_card({
                 "name": "Task",
                 "description": "Desc",
@@ -180,23 +228,26 @@ class TestCreateTrelloCardTool:
 
 
 class TestGetCardStatusTool:
-    async def test_known_list(self):
-        """Returns card with resolved worker and status."""
+    async def test_known_list_with_label(self):
+        """Returns card with resolved board, status, and worker from label."""
         mock_card = MagicMock()
         mock_card.id = "card_123"
         mock_card.name = "Task"
         mock_card.desc = "Description"
         mock_card.url = "https://trello.com/c/123"
         mock_card.id_list = "doing_list"
+        mock_card.id_labels = ["lbl_api"]
 
         with patch("app.apps.agent.tools.get_card", new_callable=AsyncMock, return_value=mock_card), \
-             patch("app.apps.agent.tools._resolve_list_id", return_value=("api", "doing")):
+             patch("app.apps.agent.tools._resolve_list", return_value=("main", "doing")), \
+             patch("app.apps.agent.tools._resolve_worker_from_labels", return_value=("api", "main")):
             result = await _get_card_status({"card_id": "card_123"})
 
         data = json.loads(result["content"][0]["text"])
         assert data["id"] == "card_123"
-        assert data["worker"] == "api"
+        assert data["board"] == "main"
         assert data["status"] == "doing"
+        assert data["worker"] == "api"
 
     async def test_unknown_list(self):
         """Returns card with 'unknown' status for unrecognized list."""
@@ -206,14 +257,17 @@ class TestGetCardStatusTool:
         mock_card.desc = ""
         mock_card.url = ""
         mock_card.id_list = "mystery_list"
+        mock_card.id_labels = []
 
         with patch("app.apps.agent.tools.get_card", new_callable=AsyncMock, return_value=mock_card), \
-             patch("app.apps.agent.tools._resolve_list_id", return_value=None):
+             patch("app.apps.agent.tools._resolve_list", return_value=None), \
+             patch("app.apps.agent.tools._resolve_worker_from_labels", return_value=None):
             result = await _get_card_status({"card_id": "card_123"})
 
         data = json.loads(result["content"][0]["text"])
         assert data["status"] == "unknown"
         assert data["list_id"] == "mystery_list"
+        assert "worker" not in data
 
     async def test_api_error(self):
         """Returns error result on Trello API failure."""
@@ -226,45 +280,58 @@ class TestGetCardStatusTool:
 
 
 class TestGetWorkerCardsTool:
-    async def test_returns_cards(self):
-        """Returns cards from the specified worker's list."""
-        mock_worker = MagicMock()
-        mock_worker.lists.todo = "todo_123"
+    async def test_returns_filtered_cards(self):
+        """Returns only cards matching the worker's label from the shared list."""
+        worker = _mock_worker(label_id="lbl_api")
+        board = _mock_board({"api": worker})
 
         card1 = MagicMock()
         card1.id = "c1"
         card1.name = "Task 1"
         card1.url = "https://trello.com/c/c1"
+        card1.id_labels = ["lbl_api"]
+
         card2 = MagicMock()
         card2.id = "c2"
         card2.name = "Task 2"
         card2.url = "https://trello.com/c/c2"
+        card2.id_labels = ["lbl_other"]  # different worker's label
+
+        card3 = MagicMock()
+        card3.id = "c3"
+        card3.name = "Task 3"
+        card3.url = "https://trello.com/c/c3"
+        card3.id_labels = ["lbl_api"]
 
         with patch("app.apps.agent.tools.settings") as mock_settings, \
-             patch("app.apps.agent.tools.get_list_cards", new_callable=AsyncMock, return_value=[card1, card2]):
-            mock_settings.all_workers = {"api": mock_worker}
+             patch("app.apps.agent.tools.get_list_cards", new_callable=AsyncMock, return_value=[card1, card2, card3]):
+            mock_settings.boards = {"main": board}
+            mock_settings.all_workers = {"api": worker}
             result = await _get_worker_cards({"worker_name": "api", "list_type": "todo"})
 
         data = json.loads(result["content"][0]["text"])
         assert data["worker"] == "api"
         assert data["count"] == 2
         assert data["cards"][0]["id"] == "c1"
+        assert data["cards"][1]["id"] == "c3"
 
     async def test_unknown_worker(self):
         """Returns error for unknown worker."""
         with patch("app.apps.agent.tools.settings") as mock_settings:
+            mock_settings.boards = {}
             mock_settings.all_workers = {}
             result = await _get_worker_cards({"worker_name": "ghost", "list_type": "todo"})
         assert result["is_error"] is True
 
     async def test_empty_list(self):
-        """Returns empty cards list for a list with no cards."""
-        mock_worker = MagicMock()
-        mock_worker.lists.done = "done_123"
+        """Returns empty cards list for a list with no cards matching label."""
+        worker = _mock_worker(label_id="lbl_api")
+        board = _mock_board({"api": worker})
 
         with patch("app.apps.agent.tools.settings") as mock_settings, \
              patch("app.apps.agent.tools.get_list_cards", new_callable=AsyncMock, return_value=[]):
-            mock_settings.all_workers = {"api": mock_worker}
+            mock_settings.boards = {"main": board}
+            mock_settings.all_workers = {"api": worker}
             result = await _get_worker_cards({"worker_name": "api", "list_type": "done"})
 
         data = json.loads(result["content"][0]["text"])

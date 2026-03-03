@@ -28,16 +28,11 @@ async def _reconcile_trello_webhooks(registry: AgentRegistry) -> None:
     """Register Trello webhooks, deduplicating and cleaning stale ones."""
     webhook_base = settings.webhook_base_url
 
-    # Build desired webhook specs: {(model_id, callback_url): description}
+    # One board-level webhook per board — handles both worker and orchestrator events
     desired: dict[tuple[str, str], str] = {}
-    for name, worker in registry.workers.items():
-        callback_url = f"{webhook_base}/webhook/{name}"
-        desired[(worker.config.lists.todo, callback_url)] = f"karavan-worker-{name}"
-    orchestrator = registry.orchestrator
-    if orchestrator:
-        callback_url = f"{webhook_base}/webhook/{orchestrator.name}"
-        for board_name, board in settings.boards.items():
-            desired[(board.board_id, callback_url)] = f"karavan-board-{board_name}"
+    for board_name, board in settings.boards.items():
+        callback_url = f"{webhook_base}/webhook/{board_name}"
+        desired[(board.board_id, callback_url)] = f"karavan-board-{board_name}"
 
     # Fetch existing webhooks and reconcile
     try:

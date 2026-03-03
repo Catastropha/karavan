@@ -17,7 +17,7 @@ from app.core.config import BoardConfig, OrchestratorAgentConfig, WorkerAgentCon
 
 @pytest.fixture
 def worker_lists():
-    """Standard worker list config."""
+    """Standard board-level list config."""
     return WorkerListsConfig.model_validate({
         "todo": "todo_list_id",
         "doing": "doing_list_id",
@@ -26,10 +26,10 @@ def worker_lists():
 
 
 @pytest.fixture
-def worker_config(worker_lists):
+def worker_config():
     """Standard write-mode worker config for PR output."""
     return WorkerAgentConfig.model_validate({
-        "lists": worker_lists.model_dump(),
+        "label_id": "lbl_api",
         "repo": "git@github.com:testowner/testrepo.git",
         "branch_prefix": "agent/api",
         "base_branch": "main",
@@ -40,10 +40,10 @@ def worker_config(worker_lists):
 
 
 @pytest.fixture
-def comment_worker_config(worker_lists):
+def comment_worker_config():
     """Read-mode worker config for comment output."""
     return WorkerAgentConfig.model_validate({
-        "lists": worker_lists.model_dump(),
+        "label_id": "lbl_reviewer",
         "repo": "git@github.com:testowner/testrepo.git",
         "repo_access": "read",
         "output_mode": "comment",
@@ -53,10 +53,10 @@ def comment_worker_config(worker_lists):
 
 
 @pytest.fixture
-def cards_worker_config(worker_lists):
+def cards_worker_config():
     """None-mode worker config for cards output."""
     return WorkerAgentConfig.model_validate({
-        "lists": worker_lists.model_dump(),
+        "label_id": "lbl_planner",
         "repo_access": "none",
         "output_mode": "cards",
         "allowed_tools": ["list_workers", "create_trello_card"],
@@ -65,10 +65,10 @@ def cards_worker_config(worker_lists):
 
 
 @pytest.fixture
-def update_worker_config(worker_lists):
+def update_worker_config():
     """Read-mode worker config for update output."""
     return WorkerAgentConfig.model_validate({
-        "lists": worker_lists.model_dump(),
+        "label_id": "lbl_improver",
         "repo": "git@github.com:testowner/testrepo.git",
         "repo_access": "read",
         "output_mode": "update",
@@ -78,11 +78,12 @@ def update_worker_config(worker_lists):
 
 
 @pytest.fixture
-def board_config(worker_config):
-    """Board config with a single worker."""
+def board_config(worker_config, worker_lists):
+    """Board config with shared lists and a single worker."""
     return BoardConfig.model_validate({
         "board_id": "board_123",
         "failed_list_id": "failed_list_id",
+        "lists": worker_lists.model_dump(),
         "workers": {"api": worker_config.model_dump()},
     })
 
@@ -133,6 +134,7 @@ def make_card(
     desc: str = "## Task\nDo something",
     url: str = "https://trello.com/c/test",
     id_list: str = "todo_list_id",
+    id_labels: list[str] | None = None,
 ) -> CardOut:
     """Create a CardOut instance with sensible defaults."""
     return CardOut.model_validate({
@@ -141,4 +143,5 @@ def make_card(
         "desc": desc,
         "url": url,
         "idList": id_list,
+        "idLabels": id_labels or [],
     })

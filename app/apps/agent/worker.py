@@ -11,7 +11,7 @@ from app.apps.git_manager.crud.create import clone_repo, create_branch
 from app.apps.git_manager.crud.update import commit_and_push, create_pr, pull_base
 from app.apps.git_manager.model.input import PRCreateIn
 from app.apps.trello.crud.read import get_card, get_card_actions
-from app.apps.trello.crud.update import add_comment, update_card
+from app.apps.trello.crud.update import add_comment, add_label, remove_label, update_card
 from app.common.cost import cost_tracker
 from app.common.progress import ProgressTracker
 from app.core.config import BASE_DIR, BoardConfig, WorkerAgentConfig
@@ -109,7 +109,7 @@ class WorkerAgent(BaseAgent):
         if card_id:
             logger.info("Worker %s: moving in-flight card %s back to todo on shutdown", self.name, card_id)
             try:
-                await update_card(card_id, id_list=self.config.lists.todo)
+                await update_card(card_id, id_list=self.board.lists.todo)
                 self._processed_cards.discard(card_id)
             except Exception:
                 logger.exception(
@@ -118,8 +118,8 @@ class WorkerAgent(BaseAgent):
                 )
 
     def should_process_webhook(self, list_id: str) -> bool:
-        """Process webhooks when a card enters this worker's todo list."""
-        return list_id == self.config.lists.todo
+        """Not used for label-based routing — hook handler routes by label directly."""
+        return False
 
     async def _process(self, item: object) -> None:
         """Process a webhook event — pick up and execute a Trello card."""
@@ -308,9 +308,16 @@ class WorkerAgent(BaseAgent):
         """Full card execution lifecycle — delegates to stage methods based on config."""
         card = await get_card(card_id)
 
-        if card.id_list != self.config.lists.todo:
+        if card.id_list != self.board.lists.todo:
             logger.info(
                 "Worker %s skipping card '%s' — not in todo list",
+                self.name, card.name,
+            )
+            return
+
+        if self.config.label_id not in card.id_labels:
+            logger.info(
+                "Worker %s skipping card '%s' — label not present",
                 self.name, card.name,
             )
             return
@@ -325,7 +332,7 @@ class WorkerAgent(BaseAgent):
 
         try:
             # 1. Move to doing
-            await update_card(card_id, id_list=self.config.lists.doing)
+            await update_card(card_id, id_list=self.board.lists.doing)
             await tracker.start()
 
             # 2. Setup repo (conditional on repo_access)
@@ -342,9 +349,18 @@ class WorkerAgent(BaseAgent):
                 card, card_id, branch_name, result_text, execution_cost, tracker,
             )
 
-            # 6. Move to done (if not already handled by deliver)
+            # 6. Move to done or pipeline next stage
             if should_move_done:
-                await update_card(card_id, id_list=self.config.lists.done)
+                if self.config.next_stage:
+                    # Pipeline continues — swap label, move back to todo
+                    next_worker = self.board.workers[self.config.next_stage]
+                    await update_card(card_id, id_list=self.board.lists.todo)
+                    await remove_label(card_id, self.config.label_id)
+                    await add_label(card_id, next_worker.label_id)
+                else:
+                    # Terminal stage — remove label, move to done
+                    await remove_label(card_id, self.config.label_id)
+                    await update_card(card_id, id_list=self.board.lists.done)
                 if self.config.output_mode != "pr":
                     await tracker.finish(success=True, cost_usd=execution_cost)
                 logger.info("Worker %s completed card '%s'", self.name, card.name)
@@ -371,7 +387,9 @@ class WorkerAgent(BaseAgent):
                         f"Agent {self.name} failed to process this card. Check server logs.",
                     )
                     self._processed_cards.discard(card_id)
-                    await update_card(card_id, id_list=self.config.lists.todo)
+                    await update_card(card_id, id_list=self.board.lists.todo)
+                    await remove_label(card_id, self.config.label_id)
+                    await add_label(card_id, self.config.label_id)
             except Exception:
                 logger.exception("Failed to handle failure for card %s", card_id)
         finally:

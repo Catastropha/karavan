@@ -62,7 +62,7 @@ class OrchestratorAgent(BaseAgent):
         # Create Claude SDK client with read access to repos + Trello tools
         sdk_data = {
             "add_dirs": [str(d) for d in self._repo_dirs],
-            "allowed_tools": ["Read", "Glob", "Grep", *MCP_TOOL_NAMES],
+            "allowed_tools": [*self.config.allowed_tools, *MCP_TOOL_NAMES],
             "mcp_servers": {"karavan": mcp_server},
             "system_prompt": {
                 "type": "preset",
@@ -194,14 +194,14 @@ class OrchestratorAgent(BaseAgent):
         return card_ids
 
     async def _find_unblocked_cards(self, completed_card_id: str) -> list[dict]:
-        """Scan all workers' todo lists for cards whose dependencies are now fully satisfied."""
+        """Scan all boards' todo lists for cards whose dependencies are now fully satisfied."""
         unblocked: list[dict] = []
 
-        for worker_name, config in settings.all_workers.items():
+        for board_name, board in settings.boards.items():
             try:
-                cards = await get_list_cards(config.lists.todo)
+                cards = await get_list_cards(board.lists.todo)
             except Exception:
-                logger.warning("Failed to fetch todo list for worker %s", worker_name)
+                logger.warning("Failed to fetch todo list for board %s", board_name)
                 continue
 
             for card in cards:
@@ -222,10 +222,16 @@ class OrchestratorAgent(BaseAgent):
                         break
 
                 if all_satisfied:
+                    # Resolve worker from card labels
+                    worker_name = None
+                    for wname, wcfg in board.workers.items():
+                        if wcfg.label_id in card.id_labels:
+                            worker_name = wname
+                            break
                     unblocked.append({
                         "card_id": card.id,
                         "card_name": card.name,
-                        "worker": worker_name,
+                        "worker": worker_name or "unknown",
                     })
 
         return unblocked

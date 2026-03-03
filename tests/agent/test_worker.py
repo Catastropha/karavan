@@ -60,16 +60,10 @@ class TestWorkerAgentInit:
 
 
 class TestWorkerShouldProcessWebhook:
-    def test_matches_todo_list(self, worker_agent):
-        assert worker_agent.should_process_webhook("todo_list_id") is True
-
-    def test_rejects_doing_list(self, worker_agent):
+    def test_always_returns_false(self, worker_agent):
+        """Label-based routing means should_process_webhook is not used."""
+        assert worker_agent.should_process_webhook("todo_list_id") is False
         assert worker_agent.should_process_webhook("doing_list_id") is False
-
-    def test_rejects_done_list(self, worker_agent):
-        assert worker_agent.should_process_webhook("done_list_id") is False
-
-    def test_rejects_unknown_list(self, worker_agent):
         assert worker_agent.should_process_webhook("random_list") is False
 
 
@@ -415,7 +409,15 @@ class TestDeliverPr:
 class TestExecuteCard:
     async def test_skips_card_not_in_todo(self, worker_agent):
         """Card not in the todo list is skipped."""
-        card = make_card(id_list="doing_list_id")
+        card = make_card(id_list="doing_list_id", id_labels=["lbl_api"])
+        with patch("app.apps.agent.worker.get_card", new_callable=AsyncMock, return_value=card), \
+             patch.object(worker_agent, "_setup_repo", new_callable=AsyncMock) as mock_setup:
+            await worker_agent._execute_card("card_id")
+            mock_setup.assert_not_awaited()
+
+    async def test_skips_card_without_label(self, worker_agent):
+        """Card without the worker's label is skipped."""
+        card = make_card(id_labels=["lbl_other"])
         with patch("app.apps.agent.worker.get_card", new_callable=AsyncMock, return_value=card), \
              patch.object(worker_agent, "_setup_repo", new_callable=AsyncMock) as mock_setup:
             await worker_agent._execute_card("card_id")
@@ -423,9 +425,10 @@ class TestExecuteCard:
 
     async def test_adds_card_to_processed_set(self, worker_agent):
         """Card ID is added to _processed_cards after pickup."""
-        card = make_card()
+        card = make_card(id_labels=["lbl_api"])
         with patch("app.apps.agent.worker.get_card", new_callable=AsyncMock, return_value=card), \
              patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
+             patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock), \
              patch.object(worker_agent, "_setup_repo", new_callable=AsyncMock), \
              patch.object(worker_agent, "_run_sdk", new_callable=AsyncMock, return_value=("result", 0.01, {})), \
              patch.object(worker_agent, "_deliver_output", new_callable=AsyncMock, return_value=True), \
@@ -438,9 +441,10 @@ class TestExecuteCard:
 
     async def test_moves_card_to_doing(self, worker_agent):
         """Card is moved to the doing list at the start of execution."""
-        card = make_card()
+        card = make_card(id_labels=["lbl_api"])
         with patch("app.apps.agent.worker.get_card", new_callable=AsyncMock, return_value=card), \
              patch("app.apps.agent.worker.update_card", new_callable=AsyncMock) as mock_update, \
+             patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock), \
              patch.object(worker_agent, "_setup_repo", new_callable=AsyncMock), \
              patch.object(worker_agent, "_run_sdk", new_callable=AsyncMock, return_value=("result", 0.01, {})), \
              patch.object(worker_agent, "_deliver_output", new_callable=AsyncMock, return_value=True), \
@@ -454,10 +458,11 @@ class TestExecuteCard:
         assert first_call == (("abc123def456789012345678",), {"id_list": "doing_list_id"})
 
     async def test_moves_card_to_done_on_success(self, worker_agent):
-        """Card is moved to the done list after successful execution."""
-        card = make_card()
+        """Terminal worker removes label and moves card to done list."""
+        card = make_card(id_labels=["lbl_api"])
         with patch("app.apps.agent.worker.get_card", new_callable=AsyncMock, return_value=card), \
              patch("app.apps.agent.worker.update_card", new_callable=AsyncMock) as mock_update, \
+             patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock) as mock_remove, \
              patch.object(worker_agent, "_setup_repo", new_callable=AsyncMock), \
              patch.object(worker_agent, "_run_sdk", new_callable=AsyncMock, return_value=("result", 0.01, {})), \
              patch.object(worker_agent, "_deliver_output", new_callable=AsyncMock, return_value=True), \
@@ -466,15 +471,18 @@ class TestExecuteCard:
             mock_pt.return_value = AsyncMock()
             await worker_agent._execute_card("abc123def456789012345678")
 
+        # Label should be removed
+        mock_remove.assert_awaited_once_with("abc123def456789012345678", "lbl_api")
         # Last update_card call should be moving to done
         last_call = mock_update.call_args_list[-1]
         assert last_call == (("abc123def456789012345678",), {"id_list": "done_list_id"})
 
     async def test_branch_name_from_config(self, worker_agent):
         """Branch name is constructed from branch_prefix and card_id suffix."""
-        card = make_card(card_id="abc123def456789012345678")
+        card = make_card(card_id="abc123def456789012345678", id_labels=["lbl_api"])
         with patch("app.apps.agent.worker.get_card", new_callable=AsyncMock, return_value=card), \
              patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
+             patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock), \
              patch.object(worker_agent, "_setup_repo", new_callable=AsyncMock) as mock_setup, \
              patch.object(worker_agent, "_run_sdk", new_callable=AsyncMock, return_value=("", 0.0, {})), \
              patch.object(worker_agent, "_deliver_output", new_callable=AsyncMock, return_value=True), \
@@ -487,9 +495,10 @@ class TestExecuteCard:
 
     async def test_no_branch_prefix_gives_empty_branch(self, cards_worker):
         """Worker without branch_prefix produces an empty branch name."""
-        card = make_card()
+        card = make_card(id_labels=["lbl_planner"])
         with patch("app.apps.agent.worker.get_card", new_callable=AsyncMock, return_value=card), \
              patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
+             patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock), \
              patch.object(cards_worker, "_setup_repo", new_callable=AsyncMock) as mock_setup, \
              patch.object(cards_worker, "_run_sdk", new_callable=AsyncMock, return_value=("", 0.0, {})), \
              patch.object(cards_worker, "_deliver_output", new_callable=AsyncMock, return_value=True), \
@@ -502,9 +511,10 @@ class TestExecuteCard:
 
     async def test_records_cost(self, worker_agent):
         """Cost is recorded via cost_tracker after SDK run."""
-        card = make_card()
+        card = make_card(id_labels=["lbl_api"])
         with patch("app.apps.agent.worker.get_card", new_callable=AsyncMock, return_value=card), \
              patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
+             patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock), \
              patch.object(worker_agent, "_setup_repo", new_callable=AsyncMock), \
              patch.object(worker_agent, "_run_sdk", new_callable=AsyncMock, return_value=("result", 0.07, {"input_tokens": 100})), \
              patch.object(worker_agent, "_deliver_output", new_callable=AsyncMock, return_value=True), \
@@ -521,10 +531,12 @@ class TestExecuteCard:
 
 class TestRetryLogic:
     async def test_failure_adds_comment_and_retries(self, worker_agent):
-        """On failure with retries remaining, card is moved back to todo."""
-        card = make_card()
+        """On failure with retries remaining, card is moved back to todo with label re-add."""
+        card = make_card(id_labels=["lbl_api"])
         with patch("app.apps.agent.worker.get_card", new_callable=AsyncMock, return_value=card), \
              patch("app.apps.agent.worker.update_card", new_callable=AsyncMock) as mock_update, \
+             patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock) as mock_remove, \
+             patch("app.apps.agent.worker.add_label", new_callable=AsyncMock) as mock_add, \
              patch.object(worker_agent, "_setup_repo", new_callable=AsyncMock, side_effect=RuntimeError("git failed")), \
              patch("app.apps.agent.worker.get_card_actions", new_callable=AsyncMock, return_value=[]), \
              patch("app.apps.agent.worker.add_comment", new_callable=AsyncMock) as mock_comment, \
@@ -542,12 +554,16 @@ class TestRetryLogic:
         last_update = mock_update.call_args_list[-1]
         assert last_update == (("abc123def456789012345678",), {"id_list": "todo_list_id"})
 
+        # Label should be re-added to re-trigger webhook
+        mock_remove.assert_awaited_once_with("abc123def456789012345678", "lbl_api")
+        mock_add.assert_awaited_once_with("abc123def456789012345678", "lbl_api")
+
         # Card should be removed from processed set
         assert "abc123def456789012345678" not in worker_agent._processed_cards
 
     async def test_max_retries_moves_to_failed(self, worker_agent):
         """On failure at max retries, card is moved to the failed list."""
-        card = make_card()
+        card = make_card(id_labels=["lbl_api"])
         # Simulate 2 prior failures
         prior_failures = [
             {"data": {"text": f"{FAIL_PREFIX} Attempt 1/3 failed"}},
@@ -605,9 +621,10 @@ class TestGracefulShutdown:
 
     async def test_current_card_id_cleared_after_execute(self, worker_agent):
         """_current_card_id is cleared after _execute_card completes."""
-        card = make_card()
+        card = make_card(id_labels=["lbl_api"])
         with patch("app.apps.agent.worker.get_card", new_callable=AsyncMock, return_value=card), \
              patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
+             patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock), \
              patch.object(worker_agent, "_setup_repo", new_callable=AsyncMock), \
              patch.object(worker_agent, "_run_sdk", new_callable=AsyncMock, return_value=("result", 0.01, {})), \
              patch.object(worker_agent, "_deliver_output", new_callable=AsyncMock, return_value=True), \
@@ -620,9 +637,11 @@ class TestGracefulShutdown:
 
     async def test_current_card_id_cleared_after_failure(self, worker_agent):
         """_current_card_id is cleared even when _execute_card fails."""
-        card = make_card()
+        card = make_card(id_labels=["lbl_api"])
         with patch("app.apps.agent.worker.get_card", new_callable=AsyncMock, return_value=card), \
              patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
+             patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock), \
+             patch("app.apps.agent.worker.add_label", new_callable=AsyncMock), \
              patch.object(worker_agent, "_setup_repo", new_callable=AsyncMock, side_effect=RuntimeError("boom")), \
              patch("app.apps.agent.worker.get_card_actions", new_callable=AsyncMock, return_value=[]), \
              patch("app.apps.agent.worker.add_comment", new_callable=AsyncMock), \

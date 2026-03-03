@@ -22,6 +22,21 @@ async def update_card(card_id: str, *, id_list: str = "", desc: str | None = Non
     return CardOut.model_validate(resp.json())
 
 
+async def add_label(card_id: str, label_id: str) -> None:
+    """Add a label to a Trello card."""
+    params = {**auth_params(), "value": label_id}
+    resp = await res.trello_client.post(f"cards/{card_id}/idLabels", params=params)
+    resp.raise_for_status()
+    logger.info("Added label %s to card %s", label_id, card_id)
+
+
+async def remove_label(card_id: str, label_id: str) -> None:
+    """Remove a label from a Trello card."""
+    resp = await res.trello_client.delete(f"cards/{card_id}/idLabels/{label_id}", params=auth_params())
+    resp.raise_for_status()
+    logger.info("Removed label %s from card %s", label_id, card_id)
+
+
 async def add_comment(card_id: str, text: str) -> dict:
     """Add a comment to a Trello card."""
     params = {**auth_params(), "text": text}

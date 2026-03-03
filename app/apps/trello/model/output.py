@@ -13,6 +13,7 @@ class CardOut(BaseModel):
     desc: Annotated[str, Field(default="", description="Card description")]
     url: Annotated[str, Field(default="", description="Card URL")]
     id_list: Annotated[str, Field(default="", description="Current list ID", alias="idList")]
+    id_labels: Annotated[list[str], Field(default_factory=list, description="Label IDs on this card", alias="idLabels")]
 
     model_config = {"extra": "ignore", "populate_by_name": True}
 
