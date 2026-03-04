@@ -258,10 +258,10 @@ class TestHandleUserMessage:
         assert "went wrong" in sent_text
 
 
-# --- _extract_pr_link ---
+# --- _find_comment_by_prefix ---
 
 
-class TestExtractPrLink:
+class TestFindCommentByPrefix:
     async def test_finds_pr_link(self, orchestrator_config):
         """Extracts PR link from card comments."""
         orch = OrchestratorAgent("orchestrator", orchestrator_config)
@@ -269,23 +269,43 @@ class TestExtractPrLink:
             {"data": {"text": "PR opened: https://github.com/acme/app/pull/42"}},
         ]
         with patch("app.apps.agent.orchestrator.get_card_actions", new_callable=AsyncMock, return_value=actions):
-            link = await orch._extract_pr_link("card_id")
+            link = await orch._find_comment_by_prefix("card_id", "PR opened: ")
         assert link == "https://github.com/acme/app/pull/42"
 
-    async def test_no_pr_link(self, orchestrator_config):
-        """Returns None when no PR link is found."""
+    async def test_no_match_returns_none(self, orchestrator_config):
+        """Returns None when no comment matches the prefix."""
         orch = OrchestratorAgent("orchestrator", orchestrator_config)
         actions = [{"data": {"text": "Some comment"}}]
         with patch("app.apps.agent.orchestrator.get_card_actions", new_callable=AsyncMock, return_value=actions):
-            link = await orch._extract_pr_link("card_id")
+            link = await orch._find_comment_by_prefix("card_id", "PR opened: ")
         assert link is None
 
     async def test_api_error_returns_none(self, orchestrator_config):
         """API error returns None instead of raising."""
         orch = OrchestratorAgent("orchestrator", orchestrator_config)
         with patch("app.apps.agent.orchestrator.get_card_actions", new_callable=AsyncMock, side_effect=RuntimeError):
-            link = await orch._extract_pr_link("card_id")
+            link = await orch._find_comment_by_prefix("card_id", "PR opened: ")
         assert link is None
+
+    async def test_finds_failure_reason(self, orchestrator_config):
+        """Extracts text after FAIL_PREFIX from fail comments."""
+        orch = OrchestratorAgent("orchestrator", orchestrator_config)
+        actions = [
+            {"data": {"text": "[karavan:fail] Attempt 3/3 failed (max retries reached). Agent api cannot process this card."}},
+            {"data": {"text": "[karavan:fail] Attempt 2/3 failed, will retry."}},
+        ]
+        with patch("app.apps.agent.orchestrator.get_card_actions", new_callable=AsyncMock, return_value=actions):
+            reason = await orch._find_comment_by_prefix("card_xyz", "[karavan:fail]")
+        assert "Attempt 3/3 failed" in reason
+        assert "max retries reached" in reason
+
+    async def test_no_fail_comments_returns_none(self, orchestrator_config):
+        """Returns None when card has no matching comments."""
+        orch = OrchestratorAgent("orchestrator", orchestrator_config)
+        actions = [{"data": {"text": "PR opened: https://github.com/..."}}]
+        with patch("app.apps.agent.orchestrator.get_card_actions", new_callable=AsyncMock, return_value=actions):
+            reason = await orch._find_comment_by_prefix("card_xyz", "[karavan:fail]")
+        assert reason is None
 
 
 # --- _parse_dependencies ---
@@ -484,7 +504,7 @@ class TestHandleDoneEvent:
         orch._known_chat_ids = {100}
         event = {"card_name": "Add login", "card_id": "card_abc"}
 
-        with patch.object(orch, "_extract_pr_link", new_callable=AsyncMock, return_value=None), \
+        with patch.object(orch, "_find_comment_by_prefix", new_callable=AsyncMock, return_value=None), \
              patch.object(orch, "_find_unblocked_cards", new_callable=AsyncMock, return_value=[]), \
              patch.object(orch, "_notify_chats", new_callable=AsyncMock) as mock_notify:
             await orch._handle_done_event(event)
@@ -498,7 +518,7 @@ class TestHandleDoneEvent:
         orch._known_chat_ids = {100}
         event = {"card_name": "Add login", "card_id": "card_abc"}
 
-        with patch.object(orch, "_extract_pr_link", new_callable=AsyncMock, return_value="https://github.com/test/pr/1"), \
+        with patch.object(orch, "_find_comment_by_prefix", new_callable=AsyncMock, return_value="https://github.com/test/pr/1"), \
              patch.object(orch, "_find_unblocked_cards", new_callable=AsyncMock, return_value=[]), \
              patch.object(orch, "_notify_chats", new_callable=AsyncMock) as mock_notify:
             await orch._handle_done_event(event)
@@ -516,7 +536,7 @@ class TestHandleDoneEvent:
             {"card_id": "c1", "card_name": "Add dashboard", "worker": "frontend"},
         ]
 
-        with patch.object(orch, "_extract_pr_link", new_callable=AsyncMock, return_value=None), \
+        with patch.object(orch, "_find_comment_by_prefix", new_callable=AsyncMock, return_value=None), \
              patch.object(orch, "_find_unblocked_cards", new_callable=AsyncMock, return_value=unblocked), \
              patch.object(orch, "_notify_chats", new_callable=AsyncMock) as mock_notify:
             await orch._handle_done_event(event)
@@ -577,44 +597,6 @@ class TestResolveWorkerFromLabels:
         assert board is None
 
 
-# --- _extract_failure_reason ---
-
-
-class TestExtractFailureReason:
-    async def test_extracts_latest_reason(self, orchestrator_config):
-        """Extracts text after FAIL_PREFIX from the most recent fail comment."""
-        orch = OrchestratorAgent("orchestrator", orchestrator_config)
-        actions = [
-            {"data": {"text": "[karavan:fail] Attempt 3/3 failed (max retries reached). Agent api cannot process this card."}},
-            {"data": {"text": "[karavan:fail] Attempt 2/3 failed, will retry."}},
-        ]
-
-        with patch("app.apps.agent.orchestrator.get_card_actions", new_callable=AsyncMock, return_value=actions):
-            reason = await orch._extract_failure_reason("card_xyz")
-
-        assert "Attempt 3/3 failed" in reason
-        assert "max retries reached" in reason
-
-    async def test_returns_none_when_no_fail_comments(self, orchestrator_config):
-        """Returns None when card has no [karavan:fail] comments."""
-        orch = OrchestratorAgent("orchestrator", orchestrator_config)
-        actions = [{"data": {"text": "PR opened: https://github.com/..."}}]
-
-        with patch("app.apps.agent.orchestrator.get_card_actions", new_callable=AsyncMock, return_value=actions):
-            reason = await orch._extract_failure_reason("card_xyz")
-
-        assert reason is None
-
-    async def test_returns_none_on_api_error(self, orchestrator_config):
-        """Returns None when Trello API fails."""
-        orch = OrchestratorAgent("orchestrator", orchestrator_config)
-
-        with patch("app.apps.agent.orchestrator.get_card_actions", new_callable=AsyncMock, side_effect=RuntimeError("API down")):
-            reason = await orch._extract_failure_reason("card_xyz")
-
-        assert reason is None
-
-
 # --- _handle_failed_event ---
 
 
@@ -625,7 +607,7 @@ class TestHandleFailedEvent:
         event = {"card_name": "Broken task", "card_id": "card_xyz"}
 
         with patch.object(orch, "_resolve_worker_from_labels", new_callable=AsyncMock, return_value=("api", "backend")), \
-             patch.object(orch, "_extract_failure_reason", new_callable=AsyncMock, return_value="Attempt 3/3 failed (max retries reached). Agent api cannot process this card."), \
+             patch.object(orch, "_find_comment_by_prefix", new_callable=AsyncMock, return_value="Attempt 3/3 failed (max retries reached). Agent api cannot process this card."), \
              patch.object(orch, "_notify_chats", new_callable=AsyncMock) as mock_notify:
             await orch._handle_failed_event(event)
 
@@ -655,7 +637,7 @@ class TestHandleFailedEvent:
         event = {"card_name": "Broken task", "card_id": "card_xyz"}
 
         with patch.object(orch, "_resolve_worker_from_labels", new_callable=AsyncMock, return_value=(None, None)), \
-             patch.object(orch, "_extract_failure_reason", new_callable=AsyncMock, return_value=None), \
+             patch.object(orch, "_find_comment_by_prefix", new_callable=AsyncMock, return_value=None), \
              patch.object(orch, "_notify_chats", new_callable=AsyncMock) as mock_notify:
             await orch._handle_failed_event(event)
 
@@ -671,7 +653,7 @@ class TestHandleFailedEvent:
         event = {"card_name": "Broken task", "card_id": "card_xyz"}
 
         with patch.object(orch, "_resolve_worker_from_labels", new_callable=AsyncMock, return_value=("api", "backend")), \
-             patch.object(orch, "_extract_failure_reason", new_callable=AsyncMock, return_value=None), \
+             patch.object(orch, "_find_comment_by_prefix", new_callable=AsyncMock, return_value=None), \
              patch.object(orch, "_notify_chats", new_callable=AsyncMock) as mock_notify:
             await orch._handle_failed_event(event)
 

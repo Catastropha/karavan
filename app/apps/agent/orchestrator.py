@@ -164,14 +164,14 @@ class OrchestratorAgent(BaseAgent):
             except Exception:
                 logger.exception("Failed to send error message to Telegram")
 
-    async def _extract_pr_link(self, card_id: str) -> str | None:
-        """Fetch card comments and extract the PR link if present."""
+    async def _find_comment_by_prefix(self, card_id: str, prefix: str) -> str | None:
+        """Search card comments for one starting with prefix. Returns the text after the prefix."""
         try:
             actions = await get_card_actions(card_id)
             for action in actions:
                 text = action.get("data", {}).get("text", "")
-                if text.startswith("PR opened: "):
-                    return text.removeprefix("PR opened: ").strip()
+                if text.startswith(prefix):
+                    return text.removeprefix(prefix).strip()
         except Exception:
             logger.warning("Failed to fetch comments for card %s", card_id)
         return None
@@ -257,7 +257,7 @@ class OrchestratorAgent(BaseAgent):
         card_id = event.get("card_id", "")
         logger.info("Orchestrator %s: card '%s' (%s) moved to done", self.name, card_name, card_id)
 
-        pr_link = await self._extract_pr_link(card_id) if card_id else None
+        pr_link = await self._find_comment_by_prefix(card_id, "PR opened: ") if card_id else None
 
         parts = [f"Card completed: {card_name}"]
         if pr_link:
@@ -286,18 +286,6 @@ class OrchestratorAgent(BaseAgent):
             logger.warning("Failed to resolve worker from card %s labels", card_id)
         return None, None
 
-    async def _extract_failure_reason(self, card_id: str) -> str | None:
-        """Extract the latest failure reason from card comments."""
-        try:
-            actions = await get_card_actions(card_id)
-            for action in actions:
-                text = action.get("data", {}).get("text", "")
-                if text.startswith(FAIL_PREFIX):
-                    return text.removeprefix(FAIL_PREFIX).strip()
-        except Exception:
-            logger.warning("Failed to fetch failure reason for card %s", card_id)
-        return None
-
     async def _handle_failed_event(self, event: dict) -> None:
         """Handle a card-moved-to-failed webhook event — notify user with worker and failure reason."""
         card_name = event.get("card_name", "Unknown card")
@@ -310,7 +298,7 @@ class OrchestratorAgent(BaseAgent):
 
         if card_id:
             worker_name, board_name = await self._resolve_worker_from_labels(card_id)
-            failure_reason = await self._extract_failure_reason(card_id)
+            failure_reason = await self._find_comment_by_prefix(card_id, FAIL_PREFIX)
 
         parts = [f"Card failed: {card_name}"]
         if board_name:

@@ -44,22 +44,21 @@ class RateLimitedTransport(httpx.AsyncBaseTransport):
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         """Send request with proactive rate limiting and 429 retry with backoff."""
+        last_response: httpx.Response | None = None
+
         for attempt in range(self._max_retries + 1):
             await self._acquire_capacity()
-            response = await self._transport.handle_async_request(request)
-            if response.status_code != 429:
-                return response
-            if attempt == self._max_retries:
-                return response
-            await response.aclose()
-            backoff = 2 ** attempt
-            retry_after = float(response.headers.get("retry-after", str(backoff)))
-            logger.warning(
-                "Trello 429 rate limited, retry %d/%d in %.1fs",
-                attempt + 1, self._max_retries, retry_after,
-            )
+            last_response = await self._transport.handle_async_request(request)
+
+            if last_response.status_code != 429 or attempt == self._max_retries:
+                return last_response
+
+            await last_response.aclose()
+            retry_after = float(last_response.headers.get("retry-after", str(2 ** attempt)))
+            logger.warning("Trello 429 rate limited, retry %d/%d in %.1fs", attempt + 1, self._max_retries, retry_after)
             await asyncio.sleep(retry_after)
-        return response  # unreachable, satisfies type checker
+
+        return last_response  # type: ignore[return-value]
 
     async def aclose(self) -> None:
         """Close the wrapped transport."""

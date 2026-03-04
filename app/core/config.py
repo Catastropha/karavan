@@ -91,20 +91,15 @@ class BoardConfig(BaseModel):
             if worker.next_stage and worker.next_stage not in self.workers:
                 raise ValueError(f"Worker '{name}' next_stage '{worker.next_stage}' not found on this board")
 
-        # Detect cycles via path traversal from each worker
-        visited: set[str] = set()
+        # Detect cycles: follow each chain, if we visit more workers than exist, there's a cycle
         for name in self.workers:
-            path: list[str] = []
-            path_set: set[str] = set()
+            seen: set[str] = set()
             current: str | None = name
-            while current and current not in visited:
-                if current in path_set:
-                    cycle = " -> ".join(path[path.index(current):] + [current])
-                    raise ValueError(f"Pipeline cycle detected: {cycle}")
-                path.append(current)
-                path_set.add(current)
+            while current:
+                if current in seen:
+                    raise ValueError(f"Pipeline cycle detected at '{current}'")
+                seen.add(current)
                 current = self.workers[current].next_stage
-            visited.update(path_set)
         return self
 
 

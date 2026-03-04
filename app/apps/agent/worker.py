@@ -23,54 +23,6 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 FAIL_PREFIX = "[karavan:fail]"
 
-# Per-output_mode prompt fragments: (intro, rules, completion)
-_MODE_PROMPTS: dict[str, tuple[str, list[str], str]] = {
-    "pr": (
-        "You are a worker agent in the Karavan system. Your job is to **write code** that fulfills the task below.\n",
-        [
-            "- **DO** read existing code to understand patterns before making changes.",
-            "- **DO** write clean, production-quality code that fits the existing codebase style.",
-            "- **DO** create or modify tests if the project has a test suite.",
-            "- **DO NOT** run any git commands (no `git add`, `git commit`, `git push`, `git checkout`, etc.). The harness handles all git operations after you finish.",
-            "- **DO NOT** just explain what to do — actually write the code.",
-            "- **DO NOT** modify files unrelated to this task.",
-        ],
-        "When you are done, briefly summarize what files you changed and why. The harness will commit, push, and open a PR automatically.",
-    ),
-    "comment": (
-        "You are a worker agent in the Karavan system. Your job is to **analyze the task below and provide a detailed written response**.\n",
-        [
-            "- **DO** provide thorough, actionable analysis.",
-            "- **DO** reference specific files and line numbers when relevant.",
-            "- **DO NOT** modify any files — this is a read-only analysis task.",
-        ],
-        "When you are done, provide your complete analysis. It will be posted as a comment on the Trello card.",
-    ),
-    "cards": (
-        "You are a worker agent in the Karavan system. Your job is to **break down the task below into concrete, actionable sub-tasks** and create Trello cards for each using the available MCP tools.\n"
-        "\n"
-        "Use `list_workers` to discover available workers and their todo list IDs, then use `create_trello_card` to create cards.\n",
-        [
-            "- **DO** use `list_workers` to find available workers before creating cards.",
-            "- **DO** follow the card schema format (## Task, ## Context, ## Acceptance Criteria).",
-            "- **DO** set dependencies between cards when order matters.",
-            "- **DO NOT** modify any files — use only the MCP tools to create cards.",
-        ],
-        "When you are done creating cards, briefly summarize what cards you created and why.",
-    ),
-    "update": (
-        "You are a worker agent in the Karavan system. Your job is to **produce an improved version of the card description** below.\n"
-        "\n"
-        "Output ONLY the updated card description in markdown. Do not include any preamble or explanation — just the new description content.\n",
-        [
-            "- **DO** preserve the card schema structure (## Task, ## Context, etc.).",
-            "- **DO** make the description clearer, more detailed, and more actionable.",
-            "- **DO NOT** modify any files — your text output IS the deliverable.",
-        ],
-        "Output the complete updated card description now.",
-    ),
-}
-
 
 def _parse_repo_url(repo_url: str) -> tuple[str, str]:
     """Extract owner/repo from a git SSH URL like git@github.com:user/repo.git."""
@@ -204,9 +156,24 @@ class WorkerAgent(BaseAgent):
 
     def _build_prompt(self, card: object, branch_name: str) -> str:
         """Build the SDK prompt based on output_mode and repo_access."""
-        intro, rules, completion = _MODE_PROMPTS[self.config.output_mode]
+        mode = self.config.output_mode
+        parts: list[str] = [f"# Task: {card.name}\n"]
 
-        parts = [f"# Task: {card.name}\n", intro]
+        # Intro — what is this agent's role?
+        if mode == "pr":
+            parts.append("You are a worker agent in the Karavan system. Your job is to **write code** that fulfills the task below.\n")
+        elif mode == "comment":
+            parts.append("You are a worker agent in the Karavan system. Your job is to **analyze the task below and provide a detailed written response**.\n")
+        elif mode == "cards":
+            parts.append(
+                "You are a worker agent in the Karavan system. Your job is to **break down the task below into concrete, actionable sub-tasks** and create Trello cards for each using the available MCP tools.\n\n"
+                "Use `list_workers` to discover available workers and their todo list IDs, then use `create_trello_card` to create cards.\n"
+            )
+        elif mode == "update":
+            parts.append(
+                "You are a worker agent in the Karavan system. Your job is to **produce an improved version of the card description** below.\n\n"
+                "Output ONLY the updated card description in markdown. Do not include any preamble or explanation — just the new description content.\n"
+            )
 
         # Repo context (when applicable)
         if self.config.repo_access != "none" and self.owner:
@@ -219,27 +186,53 @@ class WorkerAgent(BaseAgent):
                 parts.append(f"- **Directory:** `{self.repo_dir}` (read-only context)")
             parts.append("")
 
+        # Rules — what to do and not do
         parts.append("## Rules")
-        parts.extend(rules)
+        if mode == "pr":
+            parts.append("- **DO** read existing code to understand patterns before making changes.")
+            parts.append("- **DO** write clean, production-quality code that fits the existing codebase style.")
+            parts.append("- **DO** create or modify tests if the project has a test suite.")
+            parts.append("- **DO NOT** run any git commands (no `git add`, `git commit`, `git push`, `git checkout`, etc.). The harness handles all git operations after you finish.")
+            parts.append("- **DO NOT** just explain what to do — actually write the code.")
+            parts.append("- **DO NOT** modify files unrelated to this task.")
+        elif mode == "comment":
+            parts.append("- **DO** provide thorough, actionable analysis.")
+            parts.append("- **DO** reference specific files and line numbers when relevant.")
+            parts.append("- **DO NOT** modify any files — this is a read-only analysis task.")
+        elif mode == "cards":
+            parts.append("- **DO** use `list_workers` to find available workers before creating cards.")
+            parts.append("- **DO** follow the card schema format (## Task, ## Context, ## Acceptance Criteria).")
+            parts.append("- **DO** set dependencies between cards when order matters.")
+            parts.append("- **DO NOT** modify any files — use only the MCP tools to create cards.")
+        elif mode == "update":
+            parts.append("- **DO** preserve the card schema structure (## Task, ## Context, etc.).")
+            parts.append("- **DO** make the description clearer, more detailed, and more actionable.")
+            parts.append("- **DO NOT** modify any files — your text output IS the deliverable.")
         parts.append("")
 
+        # Card description
         parts.append("## Card Description")
         parts.append(card.desc)
         parts.append("")
 
+        # Completion — what to output when done
         parts.append("## Completion")
-        parts.append(completion)
+        if mode == "pr":
+            parts.append("When you are done, briefly summarize what files you changed and why. The harness will commit, push, and open a PR automatically.")
+        elif mode == "comment":
+            parts.append("When you are done, provide your complete analysis. It will be posted as a comment on the Trello card.")
+        elif mode == "cards":
+            parts.append("When you are done creating cards, briefly summarize what cards you created and why.")
+        elif mode == "update":
+            parts.append("Output the complete updated card description now.")
 
         return "\n".join(parts)
 
     async def _run_sdk(self, card: object, branch_name: str, tracker: ProgressTracker) -> tuple[str, float | None, dict | None]:
         """Run the Claude Agent SDK query with config-driven options."""
         prompt = self._build_prompt(card, branch_name)
-        result_text = ""
-        execution_cost: float | None = None
-        execution_usage: dict | None = None
 
-        # Build SDK options based on config axes
+        # Build SDK options
         sdk_kwargs: dict = {
             "allowed_tools": list(self.config.allowed_tools),
             "system_prompt": {
@@ -261,24 +254,26 @@ class WorkerAgent(BaseAgent):
             sdk_kwargs["mcp_servers"] = {"karavan": build_mcp_server("karavan_worker")}
             sdk_kwargs["allowed_tools"] = list({*sdk_kwargs["allowed_tools"], *MCP_TOOL_NAMES})
 
-        async def _consume() -> tuple[str, float | None, dict | None]:
-            text = ""
-            cost: float | None = None
-            usage: dict | None = None
+        # Run the SDK query and collect results
+        result_text = ""
+        cost: float | None = None
+        usage: dict | None = None
+
+        async def _consume() -> None:
+            nonlocal result_text, cost, usage
             async for message in query(prompt=prompt, options=ClaudeAgentOptions.model_validate(sdk_kwargs)):
                 tracker.record_activity(message)
                 if hasattr(message, "total_cost_usd"):
                     cost = message.total_cost_usd
                     usage = message.usage
-                    text = getattr(message, "result", "") or ""
-            return text, cost, usage
+                    result_text = getattr(message, "result", "") or ""
 
         try:
-            return await asyncio.wait_for(_consume(), timeout=self.config.sdk_timeout)
+            await asyncio.wait_for(_consume(), timeout=self.config.sdk_timeout)
         except asyncio.TimeoutError:
-            raise TimeoutError(
-                f"SDK query timed out after {self.config.sdk_timeout}s"
-            ) from None
+            raise TimeoutError(f"SDK query timed out after {self.config.sdk_timeout}s") from None
+
+        return result_text, cost, usage
 
     async def _deliver_output(
         self,
