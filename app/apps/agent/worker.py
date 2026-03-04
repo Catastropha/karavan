@@ -1,5 +1,6 @@
 """WorkerAgent — picks up Trello cards and executes them based on configurable behavior axes."""
 
+import asyncio
 import contextlib
 import logging
 import re
@@ -11,7 +12,7 @@ from app.apps.agent.tools import MCP_TOOL_NAMES, build_mcp_server
 from app.apps.git_manager.crud.create import clone_repo, create_branch
 from app.apps.git_manager.crud.update import commit_and_push, create_pr, pull_base
 from app.apps.git_manager.model.input import PRCreateIn
-from app.apps.trello.crud.read import get_card, get_card_actions
+from app.apps.trello.crud.read import get_card, get_card_actions, get_list_cards
 from app.apps.trello.crud.update import add_comment, add_label, remove_label, update_card
 from app.common.cost import cost_tracker
 from app.common.progress import ProgressTracker
@@ -101,6 +102,47 @@ class WorkerAgent(BaseAgent):
         else:
             self.owner = ""
             self.repo_name = ""
+
+    async def start(self) -> None:
+        """Start the worker, recovering any orphaned cards from a previous run."""
+        await super().start()
+        await self._recover_cards()
+
+    async def _recover_cards(self) -> None:
+        """Move own cards from doing back to todo and re-queue all own todo cards."""
+        # Recover cards stuck in doing (from crash/restart)
+        try:
+            doing_cards = await get_list_cards(self.board.lists.doing)
+        except Exception:
+            logger.exception("Worker %s: failed to fetch doing list", self.name)
+            doing_cards = []
+
+        for card in doing_cards:
+            if self.config.label_id not in card.id_labels:
+                continue
+            try:
+                await update_card(card.id, id_list=self.board.lists.todo)
+                logger.info("Worker %s: recovered card '%s' from doing to todo", self.name, card.name)
+            except Exception:
+                logger.exception("Worker %s: failed to recover card '%s'", self.name, card.id)
+
+        # Re-queue all own cards in todo
+        try:
+            todo_cards = await get_list_cards(self.board.lists.todo)
+        except Exception:
+            logger.exception("Worker %s: failed to fetch todo list", self.name)
+            todo_cards = []
+
+        for card in todo_cards:
+            if self.config.label_id not in card.id_labels:
+                continue
+            await self.queue.put({
+                "action_type": "addLabelToCard",
+                "card_id": card.id,
+                "card_name": card.name,
+                "label_id": self.config.label_id,
+            })
+            logger.info("Worker %s: re-queued card '%s' from todo", self.name, card.name)
 
     async def stop(self) -> None:
         """Stop the agent, moving any in-flight card back to todo for retry on restart."""
@@ -219,14 +261,24 @@ class WorkerAgent(BaseAgent):
             sdk_kwargs["mcp_servers"] = {"karavan": build_mcp_server("karavan_worker")}
             sdk_kwargs["allowed_tools"] = list({*sdk_kwargs["allowed_tools"], *MCP_TOOL_NAMES})
 
-        async for message in query(prompt=prompt, options=ClaudeAgentOptions.model_validate(sdk_kwargs)):
-            tracker.record_activity(message)
-            if hasattr(message, "total_cost_usd"):
-                execution_cost = message.total_cost_usd
-                execution_usage = message.usage
-                result_text = getattr(message, "result", "") or ""
+        async def _consume() -> tuple[str, float | None, dict | None]:
+            text = ""
+            cost: float | None = None
+            usage: dict | None = None
+            async for message in query(prompt=prompt, options=ClaudeAgentOptions.model_validate(sdk_kwargs)):
+                tracker.record_activity(message)
+                if hasattr(message, "total_cost_usd"):
+                    cost = message.total_cost_usd
+                    usage = message.usage
+                    text = getattr(message, "result", "") or ""
+            return text, cost, usage
 
-        return result_text, execution_cost, execution_usage
+        try:
+            return await asyncio.wait_for(_consume(), timeout=self.config.sdk_timeout)
+        except asyncio.TimeoutError:
+            raise TimeoutError(
+                f"SDK query timed out after {self.config.sdk_timeout}s"
+            ) from None
 
     async def _deliver_output(
         self,
@@ -369,14 +421,11 @@ class WorkerAgent(BaseAgent):
             if self.config.next_stage:
                 next_worker = self.board.workers[self.config.next_stage]
                 await update_card(card_id, id_list=self.board.lists.todo)
-                await remove_label(card_id, self.config.label_id)
-                try:
-                    await add_label(card_id, next_worker.label_id)
-                except Exception:
-                    # Re-add our own label so the card isn't orphaned without any label
-                    with contextlib.suppress(Exception):
-                        await add_label(card_id, self.config.label_id)
-                    raise
+                # Add next label BEFORE removing ours — card briefly has two
+                # labels but is never orphaned without any label.
+                await add_label(card_id, next_worker.label_id)
+                with contextlib.suppress(Exception):
+                    await remove_label(card_id, self.config.label_id)
             else:
                 # Terminal: move to done first, then clean up label.
                 # A card in done with a stale label is harmless;

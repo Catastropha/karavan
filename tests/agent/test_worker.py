@@ -56,6 +56,123 @@ class TestWorkerAgentInit:
         assert comment_worker.repo_name == "testrepo"
 
 
+# --- _recover_cards ---
+
+
+class TestRecoverCards:
+    async def test_moves_doing_cards_to_todo(self, worker_agent):
+        """Cards in doing with this worker's label are moved to todo."""
+        doing_card = make_card(card_id="card_doing", id_labels=["lbl_api"], id_list="doing_list_id")
+        with patch("app.apps.agent.worker.get_list_cards", new_callable=AsyncMock, side_effect=[
+            [doing_card],  # doing list
+            [],            # todo list (after recovery)
+        ]), patch("app.apps.agent.worker.update_card", new_callable=AsyncMock) as mock_update:
+            await worker_agent._recover_cards()
+
+        mock_update.assert_awaited_once_with("card_doing", id_list="todo_list_id")
+
+    async def test_ignores_doing_cards_without_label(self, worker_agent):
+        """Cards in doing without this worker's label are left alone."""
+        other_card = make_card(card_id="card_other", id_labels=["lbl_other"], id_list="doing_list_id")
+        with patch("app.apps.agent.worker.get_list_cards", new_callable=AsyncMock, side_effect=[
+            [other_card],  # doing list
+            [],            # todo list
+        ]), patch("app.apps.agent.worker.update_card", new_callable=AsyncMock) as mock_update:
+            await worker_agent._recover_cards()
+
+        mock_update.assert_not_awaited()
+
+    async def test_queues_todo_cards_with_label(self, worker_agent):
+        """Cards in todo with this worker's label are pushed into the queue."""
+        todo_card = make_card(card_id="card_todo", name="Pending task", id_labels=["lbl_api"])
+        with patch("app.apps.agent.worker.get_list_cards", new_callable=AsyncMock, side_effect=[
+            [],            # doing list
+            [todo_card],   # todo list
+        ]):
+            await worker_agent._recover_cards()
+
+        assert not worker_agent.queue.empty()
+        item = worker_agent.queue.get_nowait()
+        assert item["card_id"] == "card_todo"
+        assert item["card_name"] == "Pending task"
+        assert item["label_id"] == "lbl_api"
+        assert item["action_type"] == "addLabelToCard"
+
+    async def test_ignores_todo_cards_without_label(self, worker_agent):
+        """Cards in todo without this worker's label are not queued."""
+        other_card = make_card(card_id="card_other", id_labels=["lbl_other"])
+        with patch("app.apps.agent.worker.get_list_cards", new_callable=AsyncMock, side_effect=[
+            [],            # doing list
+            [other_card],  # todo list
+        ]):
+            await worker_agent._recover_cards()
+
+        assert worker_agent.queue.empty()
+
+    async def test_doing_cards_then_queued_from_todo(self, worker_agent):
+        """Full flow: doing card is moved to todo, then the todo scan picks it up."""
+        doing_card = make_card(card_id="card_recover", name="Crashed task", id_labels=["lbl_api"], id_list="doing_list_id")
+        # After moving to todo, the todo scan should find it
+        todo_card = make_card(card_id="card_recover", name="Crashed task", id_labels=["lbl_api"])
+        with patch("app.apps.agent.worker.get_list_cards", new_callable=AsyncMock, side_effect=[
+            [doing_card],   # doing list
+            [todo_card],    # todo list (includes the recovered card)
+        ]), patch("app.apps.agent.worker.update_card", new_callable=AsyncMock):
+            await worker_agent._recover_cards()
+
+        assert not worker_agent.queue.empty()
+        item = worker_agent.queue.get_nowait()
+        assert item["card_id"] == "card_recover"
+
+    async def test_doing_list_fetch_error_continues_to_todo(self, worker_agent):
+        """Failure to fetch doing list still attempts todo list recovery."""
+        todo_card = make_card(card_id="card_todo", name="Pending", id_labels=["lbl_api"])
+        with patch("app.apps.agent.worker.get_list_cards", new_callable=AsyncMock, side_effect=[
+            RuntimeError("Trello down"),  # doing list fetch fails
+            [todo_card],                  # todo list succeeds
+        ]):
+            await worker_agent._recover_cards()
+
+        assert not worker_agent.queue.empty()
+        item = worker_agent.queue.get_nowait()
+        assert item["card_id"] == "card_todo"
+
+    async def test_todo_list_fetch_error_does_not_crash(self, worker_agent):
+        """Failure to fetch todo list is handled gracefully."""
+        with patch("app.apps.agent.worker.get_list_cards", new_callable=AsyncMock, side_effect=[
+            [],                           # doing list succeeds
+            RuntimeError("Trello down"),  # todo list fetch fails
+        ]):
+            await worker_agent._recover_cards()  # Should not raise
+
+        assert worker_agent.queue.empty()
+
+    async def test_single_card_move_error_continues(self, worker_agent):
+        """One card failing to move doesn't prevent other cards from recovering."""
+        card_ok = make_card(card_id="card_ok", name="Good card", id_labels=["lbl_api"], id_list="doing_list_id")
+        card_bad = make_card(card_id="card_bad", name="Bad card", id_labels=["lbl_api"], id_list="doing_list_id")
+        with patch("app.apps.agent.worker.get_list_cards", new_callable=AsyncMock, side_effect=[
+            [card_bad, card_ok],  # doing list
+            [],                   # todo list
+        ]), patch("app.apps.agent.worker.update_card", new_callable=AsyncMock, side_effect=[
+            RuntimeError("API error"),  # card_bad fails
+            None,                       # card_ok succeeds
+        ]) as mock_update:
+            await worker_agent._recover_cards()
+
+        assert mock_update.await_count == 2
+
+    async def test_empty_lists(self, worker_agent):
+        """No cards in doing or todo results in no actions."""
+        with patch("app.apps.agent.worker.get_list_cards", new_callable=AsyncMock, side_effect=[
+            [],  # doing list
+            [],  # todo list
+        ]):
+            await worker_agent._recover_cards()
+
+        assert worker_agent.queue.empty()
+
+
 # --- should_process_webhook ---
 
 
@@ -296,6 +413,45 @@ class TestRunSdk:
         assert usage == {"input_tokens": 1000, "output_tokens": 500}
         tracker.record_activity.assert_called_once_with(result_msg)
 
+    async def test_timeout_raises(self, worker_agent):
+        """SDK query that exceeds sdk_timeout raises TimeoutError."""
+        import asyncio
+
+        card = make_card()
+        tracker = MagicMock()
+        tracker.record_activity = MagicMock()
+        worker_agent.config.sdk_timeout = 60  # will be overridden by mock
+
+        async def _hang():
+            await asyncio.sleep(999)
+            yield  # never reached
+
+        with patch("app.apps.agent.worker.query") as mock_query, \
+             patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts, \
+             patch("app.apps.agent.worker.asyncio.wait_for", side_effect=asyncio.TimeoutError):
+            mock_opts.model_validate = MagicMock(return_value=MagicMock())
+            mock_query.return_value = _hang()
+            with pytest.raises(TimeoutError, match="SDK query timed out"):
+                await worker_agent._run_sdk(card, "branch", tracker)
+
+    async def test_timeout_value_from_config(self, worker_agent):
+        """sdk_timeout config value is passed to asyncio.wait_for."""
+        card = make_card()
+        tracker = MagicMock()
+        tracker.record_activity = MagicMock()
+        worker_agent.config.sdk_timeout = 900
+
+        with patch("app.apps.agent.worker.query") as mock_query, \
+             patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts, \
+             patch("app.apps.agent.worker.asyncio.wait_for", new_callable=AsyncMock) as mock_wait:
+            mock_opts.model_validate = MagicMock(return_value=MagicMock())
+            mock_query.return_value = aiter_from([])
+            mock_wait.return_value = ("", None, None)
+            await worker_agent._run_sdk(card, "branch", tracker)
+
+        mock_wait.assert_awaited_once()
+        assert mock_wait.call_args[1]["timeout"] == 900
+
 
 # --- _deliver_output ---
 
@@ -524,6 +680,55 @@ class TestExecuteCard:
             await worker_agent._execute_card("abc123def456789012345678")
 
         mock_ct.record.assert_called_once_with("api", 0.07, {"input_tokens": 100}, card_id="abc123def456789012345678")
+
+
+# --- _transition_card ---
+
+
+class TestTransitionCard:
+    async def test_terminal_moves_to_done_and_removes_label(self, worker_agent):
+        """Terminal worker (no next_stage) moves card to done and removes label."""
+        with patch("app.apps.agent.worker.update_card", new_callable=AsyncMock) as mock_update, \
+             patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock) as mock_remove:
+            await worker_agent._transition_card("card_id", "Test task")
+
+        mock_update.assert_awaited_once_with("card_id", id_list="done_list_id")
+        mock_remove.assert_awaited_once_with("card_id", "lbl_api")
+
+    async def test_pipeline_adds_next_label_before_removing_own(self, pipeline_worker):
+        """Pipeline worker adds next label before removing its own — never orphaned."""
+        call_order = []
+
+        async def track_add(card_id, label_id):
+            call_order.append(("add", label_id))
+
+        async def track_remove(card_id, label_id):
+            call_order.append(("remove", label_id))
+
+        with patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
+             patch("app.apps.agent.worker.add_label", new_callable=AsyncMock, side_effect=track_add), \
+             patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock, side_effect=track_remove):
+            await pipeline_worker._transition_card("card_id", "Test task")
+
+        assert call_order == [("add", "lbl_reviewer"), ("remove", "lbl_api")]
+
+    async def test_pipeline_add_label_failure_keeps_own_label(self, pipeline_worker):
+        """If adding next label fails, own label stays — card is not orphaned."""
+        with patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
+             patch("app.apps.agent.worker.add_label", new_callable=AsyncMock, side_effect=RuntimeError("API error")), \
+             patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock) as mock_remove, \
+             patch("app.apps.agent.worker.add_comment", new_callable=AsyncMock):
+            await pipeline_worker._transition_card("card_id", "Test task")
+
+        # Own label should NOT have been removed since add_label failed first
+        mock_remove.assert_not_awaited()
+
+    async def test_pipeline_remove_label_failure_is_harmless(self, pipeline_worker):
+        """If removing own label fails after next label added, card has two labels — harmless."""
+        with patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
+             patch("app.apps.agent.worker.add_label", new_callable=AsyncMock), \
+             patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock, side_effect=RuntimeError("API error")):
+            await pipeline_worker._transition_card("card_id", "Test task")  # Should not raise
 
 
 # --- Retry logic ---

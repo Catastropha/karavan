@@ -56,6 +56,10 @@ class WorkerAgentConfig(BaseModel):
         list[str],
         Field(default_factory=lambda: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"], description="Tools available to the Claude SDK agent"),
     ]
+    sdk_timeout: Annotated[
+        int,
+        Field(default=1800, ge=60, description="Wall-clock timeout in seconds for the SDK query (default: 1800 = 30 min)"),
+    ]
 
     @model_validator(mode="after")
     def _validate_config_axes(self) -> "WorkerAgentConfig":

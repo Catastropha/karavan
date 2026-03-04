@@ -78,6 +78,21 @@ def update_worker_config():
 
 
 @pytest.fixture
+def pipeline_worker_config():
+    """Write-mode worker config that hands off to a next stage."""
+    return WorkerAgentConfig.model_validate({
+        "label_id": "lbl_api",
+        "repo": "git@github.com:testowner/testrepo.git",
+        "branch_prefix": "agent/api",
+        "base_branch": "main",
+        "system_prompt": "You are a test agent.",
+        "repo_access": "write",
+        "output_mode": "pr",
+        "next_stage": "reviewer",
+    })
+
+
+@pytest.fixture
 def board_config(worker_config, worker_lists):
     """Board config with shared lists and a single worker."""
     return BoardConfig.model_validate({
@@ -85,6 +100,20 @@ def board_config(worker_config, worker_lists):
         "failed_list_id": "failed_list_id",
         "lists": worker_lists.model_dump(),
         "workers": {"api": worker_config.model_dump()},
+    })
+
+
+@pytest.fixture
+def pipeline_board_config(pipeline_worker_config, comment_worker_config, worker_lists):
+    """Board config with two workers in a pipeline: api → reviewer."""
+    return BoardConfig.model_validate({
+        "board_id": "board_123",
+        "failed_list_id": "failed_list_id",
+        "lists": worker_lists.model_dump(),
+        "workers": {
+            "api": pipeline_worker_config.model_dump(),
+            "reviewer": comment_worker_config.model_dump(),
+        },
     })
 
 
@@ -123,6 +152,12 @@ def cards_worker(cards_worker_config, board_config):
 def update_worker(update_worker_config, board_config):
     """Create an update-mode WorkerAgent."""
     return WorkerAgent("improver", update_worker_config, board_config)
+
+
+@pytest.fixture
+def pipeline_worker(pipeline_worker_config, pipeline_board_config):
+    """Create a WorkerAgent with next_stage set (api → reviewer)."""
+    return WorkerAgent("api", pipeline_worker_config, pipeline_board_config)
 
 
 # --- Shared helpers ---
