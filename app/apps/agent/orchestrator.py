@@ -194,6 +194,25 @@ class OrchestratorAgent(BaseAgent):
                 card_ids.extend(matches)
         return card_ids
 
+    async def _all_deps_done(self, dep_ids: list[str]) -> bool:
+        """Check whether every dependency card is in a done list."""
+        for dep_id in dep_ids:
+            try:
+                dep_card = await get_card(dep_id)
+                if dep_card.id_list not in settings.done_list_ids:
+                    return False
+            except Exception:
+                return False
+        return True
+
+    @staticmethod
+    def _resolve_worker_name(card_labels: list[str], board: object) -> str:
+        """Find the worker name for a card based on its labels, or 'unknown'."""
+        for worker_name, worker_cfg in board.workers.items():
+            if worker_cfg.label_id in card_labels:
+                return worker_name
+        return "unknown"
+
     async def _find_unblocked_cards(self, completed_card_id: str) -> list[dict]:
         """Scan all boards' todo lists for cards whose dependencies are now fully satisfied."""
         unblocked: list[dict] = []
@@ -209,31 +228,14 @@ class OrchestratorAgent(BaseAgent):
                 deps = self._parse_dependencies(card.desc)
                 if completed_card_id not in deps:
                     continue
+                if not await self._all_deps_done(deps):
+                    continue
 
-                # Check if ALL dependencies are now in done lists
-                all_satisfied = True
-                for dep_id in deps:
-                    try:
-                        dep_card = await get_card(dep_id)
-                        if dep_card.id_list not in settings.done_list_ids:
-                            all_satisfied = False
-                            break
-                    except Exception:
-                        all_satisfied = False
-                        break
-
-                if all_satisfied:
-                    # Resolve worker from card labels
-                    worker_name = None
-                    for wname, wcfg in board.workers.items():
-                        if wcfg.label_id in card.id_labels:
-                            worker_name = wname
-                            break
-                    unblocked.append({
-                        "card_id": card.id,
-                        "card_name": card.name,
-                        "worker": worker_name or "unknown",
-                    })
+                unblocked.append({
+                    "card_id": card.id,
+                    "card_name": card.name,
+                    "worker": self._resolve_worker_name(card.id_labels, board),
+                })
 
         return unblocked
 

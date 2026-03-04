@@ -31,9 +31,17 @@ def _describe_tool_use(block: ToolUseBlock) -> str | None:
             cmd = cmd[:57] + "..."
         return f"Running: {cmd}" if cmd else "Running command"
 
-    if name in ("Read", "Write", "Edit"):
+    if name == "Read":
         path = inp.get("file_path", "")
-        return f"{name}ing {_short_path(path)}" if path else f"{name}ing file"
+        return f"Reading {_short_path(path)}" if path else "Reading file"
+
+    if name == "Write":
+        path = inp.get("file_path", "")
+        return f"Writing {_short_path(path)}" if path else "Writing file"
+
+    if name == "Edit":
+        path = inp.get("file_path", "")
+        return f"Editing {_short_path(path)}" if path else "Editing file"
 
     if name == "Glob":
         pattern = inp.get("pattern", "")

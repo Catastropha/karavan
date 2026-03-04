@@ -1,7 +1,6 @@
 """WorkerAgent — picks up Trello cards and executes them based on configurable behavior axes."""
 
 import asyncio
-import contextlib
 import logging
 import re
 
@@ -136,10 +135,13 @@ class WorkerAgent(BaseAgent):
     async def _count_failures(self, card_id: str) -> int:
         """Count failure comments on a card by looking for the fail prefix."""
         actions = await get_card_actions(card_id)
-        return sum(
-            1 for a in actions
-            if a.get("data", {}).get("text", "").startswith(FAIL_PREFIX)
-        )
+        count = 0
+        for action in actions:
+            data = action.get("data", {})
+            text = data.get("text", "")
+            if text.startswith(FAIL_PREFIX):
+                count += 1
+        return count
 
     # --- Stage methods ---
 
@@ -255,25 +257,22 @@ class WorkerAgent(BaseAgent):
             sdk_kwargs["allowed_tools"] = list({*sdk_kwargs["allowed_tools"], *MCP_TOOL_NAMES})
 
         # Run the SDK query and collect results
-        result_text = ""
-        cost: float | None = None
-        usage: dict | None = None
-
-        async def _consume() -> None:
-            nonlocal result_text, cost, usage
+        async def _consume() -> tuple[str, float | None, dict | None]:
+            text = ""
+            cost: float | None = None
+            usage: dict | None = None
             async for message in query(prompt=prompt, options=ClaudeAgentOptions.model_validate(sdk_kwargs)):
                 tracker.record_activity(message)
                 if hasattr(message, "total_cost_usd"):
                     cost = message.total_cost_usd
                     usage = message.usage
-                    result_text = getattr(message, "result", "") or ""
+                    text = getattr(message, "result", "") or ""
+            return text, cost, usage
 
         try:
-            await asyncio.wait_for(_consume(), timeout=self.config.sdk_timeout)
+            return await asyncio.wait_for(_consume(), timeout=self.config.sdk_timeout)
         except asyncio.TimeoutError:
             raise TimeoutError(f"SDK query timed out after {self.config.sdk_timeout}s") from None
-
-        return result_text, cost, usage
 
     async def _deliver_output(
         self,
@@ -419,15 +418,19 @@ class WorkerAgent(BaseAgent):
                 # Add next label BEFORE removing ours — card briefly has two
                 # labels but is never orphaned without any label.
                 await add_label(card_id, next_worker.label_id)
-                with contextlib.suppress(Exception):
+                try:
                     await remove_label(card_id, self.config.label_id)
+                except Exception:
+                    logger.warning("Worker %s: failed to remove old label from card %s", self.name, card_id)
             else:
                 # Terminal: move to done first, then clean up label.
                 # A card in done with a stale label is harmless;
                 # a card in todo with no label is orphaned.
                 await update_card(card_id, id_list=self.board.lists.done)
-                with contextlib.suppress(Exception):
+                try:
                     await remove_label(card_id, self.config.label_id)
+                except Exception:
+                    logger.warning("Worker %s: failed to remove label from done card %s", self.name, card_id)
             logger.info("Worker %s completed card '%s'", self.name, card_name)
         except Exception:
             # Output was already delivered — don't re-run the card, just flag for manual review
@@ -435,12 +438,14 @@ class WorkerAgent(BaseAgent):
                 "Worker %s: card transition failed after successful delivery for '%s'",
                 self.name, card_name,
             )
-            with contextlib.suppress(Exception):
+            try:
                 await add_comment(
                     card_id,
                     f"{FAIL_PREFIX} Output was delivered successfully but the card could not be "
                     f"moved to the next stage. Manual intervention needed.",
                 )
+            except Exception:
+                logger.warning("Worker %s: failed to comment on card %s after transition failure", self.name, card_id)
 
     async def _handle_failure(self, card_id: str, card_name: str) -> None:
         """Handle a card execution failure — retry or move to failed list."""
@@ -472,10 +477,12 @@ class WorkerAgent(BaseAgent):
                         "Worker %s: re-add label failed for card %s, card may be orphaned",
                         self.name, card_id,
                     )
-                    with contextlib.suppress(Exception):
+                    try:
                         await add_comment(
                             card_id,
                             f"{FAIL_PREFIX} Retry label re-add failed. Manual re-label needed.",
                         )
+                    except Exception:
+                        logger.warning("Worker %s: failed to comment after label re-add failure for %s", self.name, card_id)
         except Exception:
             logger.exception("Failed to handle failure for card %s", card_id)

@@ -29,10 +29,13 @@ async def _reconcile_trello_webhooks(registry: AgentRegistry) -> None:
     webhook_base = settings.webhook_base_url
 
     # One board-level webhook per board — handles both worker and orchestrator events
-    desired: dict[tuple[str, str], str] = {}
+    desired: list[dict] = []
     for board_name, board in settings.boards.items():
-        callback_url = f"{webhook_base}/webhook/{board_name}"
-        desired[(board.board_id, callback_url)] = f"karavan-board-{board_name}"
+        desired.append({
+            "model_id": board.board_id,
+            "callback_url": f"{webhook_base}/webhook/{board_name}",
+            "description": f"karavan-board-{board_name}",
+        })
 
     # Fetch existing webhooks and reconcile
     try:
@@ -41,12 +44,16 @@ async def _reconcile_trello_webhooks(registry: AgentRegistry) -> None:
         logger.exception("Failed to list existing Trello webhooks, registering fresh")
         existing = []
 
-    # Track which desired webhooks already exist
-    already_registered: set[tuple[str, str]] = set()
+    # Track which desired webhooks already exist (by model_id + callback_url)
+    registered_keys: set[str] = set()
     for wh in existing:
-        key = (wh.id_model, wh.callback_url)
-        if key in desired:
-            already_registered.add(key)
+        match_key = f"{wh.id_model}|{wh.callback_url}"
+        is_desired = any(
+            wh.id_model == d["model_id"] and wh.callback_url == d["callback_url"]
+            for d in desired
+        )
+        if is_desired:
+            registered_keys.add(match_key)
         elif wh.description.startswith("karavan-"):
             try:
                 await delete_webhook(wh.id)
@@ -55,19 +62,19 @@ async def _reconcile_trello_webhooks(registry: AgentRegistry) -> None:
                 logger.warning("Failed to delete stale webhook %s", wh.id)
 
     # Register missing webhooks
-    for key, description in desired.items():
-        if key in already_registered:
-            logger.info("Webhook already exists for %s, skipping", description)
+    for webhook in desired:
+        match_key = f"{webhook['model_id']}|{webhook['callback_url']}"
+        if match_key in registered_keys:
+            logger.info("Webhook already exists for %s, skipping", webhook["description"])
             continue
-        model_id, callback_url = key
         try:
             await register_webhook(
-                model_id=model_id,
-                callback_url=callback_url,
-                description=description,
+                model_id=webhook["model_id"],
+                callback_url=webhook["callback_url"],
+                description=webhook["description"],
             )
         except Exception:
-            logger.exception("Failed to register Trello webhook: %s", description)
+            logger.exception("Failed to register Trello webhook: %s", webhook["description"])
 
 
 @asynccontextmanager

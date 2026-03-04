@@ -75,17 +75,20 @@ class CostTracker:
 
     def get_totals(self) -> dict[str, Any]:
         """Return aggregate totals across all agents."""
-        cost = inp = out = execs = 0
-        for s in self._agents.values():
-            cost += s.total_cost_usd
-            inp += s.total_input_tokens
-            out += s.total_output_tokens
-            execs += s.executions
+        total_cost = 0.0
+        total_input_tokens = 0
+        total_output_tokens = 0
+        total_executions = 0
+        for summary in self._agents.values():
+            total_cost += summary.total_cost_usd
+            total_input_tokens += summary.total_input_tokens
+            total_output_tokens += summary.total_output_tokens
+            total_executions += summary.executions
         return {
-            "total_cost_usd": round(cost, 4),
-            "total_input_tokens": inp,
-            "total_output_tokens": out,
-            "total_executions": execs,
+            "total_cost_usd": round(total_cost, 4),
+            "total_input_tokens": total_input_tokens,
+            "total_output_tokens": total_output_tokens,
+            "total_executions": total_executions,
         }
 
 

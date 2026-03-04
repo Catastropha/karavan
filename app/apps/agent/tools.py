@@ -42,8 +42,9 @@ def _worker_not_found(name: str) -> dict:
 def _resolve_list(list_id: str) -> tuple[str, str] | None:
     """Resolve a Trello list ID to (board_name, list_type) or None."""
     for board_name, board in settings.boards.items():
-        for list_type in ("todo", "doing", "done"):
-            if getattr(board.lists, list_type) == list_id:
+        lists = {"todo": board.lists.todo, "doing": board.lists.doing, "done": board.lists.done}
+        for list_type, lid in lists.items():
+            if lid == list_id:
                 return board_name, list_type
     return None
 
@@ -198,7 +199,8 @@ async def get_worker_cards_tool(args: dict) -> dict:
     config, board = result
 
     try:
-        list_id = getattr(board.lists, args["list_type"])
+        lists = {"todo": board.lists.todo, "doing": board.lists.doing, "done": board.lists.done}
+        list_id = lists[args["list_type"]]
         all_cards = await get_list_cards(list_id)
         worker_cards = [c for c in all_cards if config.label_id in c.id_labels]
         cards_out = [{"id": c.id, "name": c.name, "url": c.url} for c in worker_cards]

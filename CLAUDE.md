@@ -826,6 +826,11 @@ This applies to every Pydantic model instantiation across the entire project, wi
 
 ## Additional Conventions
 
+- Prefer obvious over clever
+- Prefer flat over nested
+- Prefer explicit over implicit
+- Prefer duplication over the wrong abstraction
+- **No nesting** deeper than 2 levels
 - **Async everywhere.** All route handlers, CRUD functions, and external API calls must be `async def`.
 - **Type hints on everything.** All function signatures must have full type hints for arguments and return values.
 - **No star imports.** Always import explicitly.
