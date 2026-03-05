@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from claude_agent_sdk import AssistantMessage, TextBlock
+
 from app.apps.agent.worker import FAIL_PREFIX, MAX_RETRIES, WorkerAgent, _parse_repo_url
 from app.apps.trello.model.output import CardOut
 from app.core.config import BoardConfig, WorkerAgentConfig
@@ -275,10 +277,11 @@ class TestSetupRepo:
 
 
 class TestBuildPrompt:
-    def test_pr_mode_prompt(self, worker_agent):
+    async def test_pr_mode_prompt(self, worker_agent):
         """PR-mode prompt includes environment, branch, and git rules."""
         card = make_card()
-        prompt = worker_agent._build_prompt(card, "agent/api/card-345678")
+        with patch("app.apps.agent.worker.get_card_actions", new_callable=AsyncMock, return_value=[]):
+            prompt = await worker_agent._build_prompt(card, "card_id", "agent/api/card-345678")
         assert "# Task: Test task" in prompt
         assert "write code" in prompt
         assert "testowner/testrepo" in prompt
@@ -287,46 +290,65 @@ class TestBuildPrompt:
         assert "## Card Description" in prompt
         assert card.desc in prompt
 
-    def test_comment_mode_prompt(self, comment_worker):
+    async def test_comment_mode_prompt(self, comment_worker):
         """Comment-mode prompt instructs analysis, no file modifications."""
         card = make_card()
-        prompt = comment_worker._build_prompt(card, "")
+        with patch("app.apps.agent.worker.get_card_actions", new_callable=AsyncMock, return_value=[]):
+            prompt = await comment_worker._build_prompt(card, "card_id", "")
         assert "analyze" in prompt
         assert "read-only" in prompt.lower()
         assert "DO NOT** modify any files" in prompt
 
-    def test_cards_mode_prompt(self, cards_worker):
+    async def test_cards_mode_prompt(self, cards_worker):
         """Cards-mode prompt instructs creating sub-tasks via MCP tools."""
         card = make_card()
-        prompt = cards_worker._build_prompt(card, "")
+        with patch("app.apps.agent.worker.get_card_actions", new_callable=AsyncMock, return_value=[]):
+            prompt = await cards_worker._build_prompt(card, "card_id", "")
         assert "break down" in prompt
         assert "list_boards" in prompt
         assert "create_trello_card" in prompt
 
-    def test_update_mode_prompt(self, update_worker):
-        """Update-mode prompt instructs appending analysis to the card."""
+    async def test_update_mode_prompt(self, update_worker):
+        """Update-mode prompt instructs posting output as comment."""
         card = make_card()
-        prompt = update_worker._build_prompt(card, "")
-        assert "APPENDED" in prompt
-        assert "do NOT repeat or rewrite previous sections" in prompt
+        with patch("app.apps.agent.worker.get_card_actions", new_callable=AsyncMock, return_value=[]):
+            prompt = await update_worker._build_prompt(card, "card_id", "")
+        assert "posted as a comment" in prompt
+        assert "do NOT repeat or rewrite previous agents' output" in prompt
 
-    def test_none_repo_access_no_environment(self, cards_worker):
+    async def test_none_repo_access_no_environment(self, cards_worker):
         """No environment section when repo_access is none."""
         card = make_card()
-        prompt = cards_worker._build_prompt(card, "")
+        with patch("app.apps.agent.worker.get_card_actions", new_callable=AsyncMock, return_value=[]):
+            prompt = await cards_worker._build_prompt(card, "card_id", "")
         assert "## Environment" not in prompt
 
-    def test_read_repo_access_shows_directory(self, comment_worker):
+    async def test_read_repo_access_shows_directory(self, comment_worker):
         """Read-mode shows directory as read-only context."""
         card = make_card()
-        prompt = comment_worker._build_prompt(card, "")
+        with patch("app.apps.agent.worker.get_card_actions", new_callable=AsyncMock, return_value=[]):
+            prompt = await comment_worker._build_prompt(card, "card_id", "")
         assert "read-only context" in prompt
+
+    async def test_includes_prior_output_comments(self, update_worker):
+        """Update-mode prompt includes prior agent output from comments."""
+        card = make_card()
+        actions = [
+            {"data": {"text": "[karavan:output:triage]\nTriage analysis here"}},
+        ]
+        with patch("app.apps.agent.worker.get_card_actions", new_callable=AsyncMock, return_value=actions):
+            prompt = await update_worker._build_prompt(card, "card_id", "")
+        assert "## Prior Agent Output" in prompt
+        assert "### triage" in prompt
+        assert "Triage analysis here" in prompt
 
 
 # --- _run_sdk ---
 
 
 class TestRunSdk:
+    """All _run_sdk tests mock get_card_actions since _build_prompt fetches output comments."""
+
     async def test_write_mode_sets_cwd(self, worker_agent):
         """Write-mode passes cwd in the SDK kwargs dict."""
         card = make_card()
@@ -334,17 +356,12 @@ class TestRunSdk:
         tracker.record_activity = MagicMock()
         captured_kwargs = {}
 
-        def mock_validate(data):
-            captured_kwargs.update(data)
-            return MagicMock()
-
         with patch("app.apps.agent.worker.query") as mock_query, \
-             patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts, \
-             patch("app.apps.agent.worker.build_worker_mcp_server") as mock_mcp:
-            mock_opts.model_validate = mock_validate
-            mock_mcp.return_value = MagicMock()
+             patch("app.apps.agent.worker.ClaudeAgentOptions", side_effect=lambda **kw: captured_kwargs.update(kw) or MagicMock()), \
+             patch("app.apps.agent.worker.build_worker_mcp_server", return_value=MagicMock()), \
+             patch("app.apps.agent.worker.get_card_actions", new_callable=AsyncMock, return_value=[]):
             mock_query.return_value = aiter_from([])
-            await worker_agent._run_sdk(card, "agent/api/card-345678", tracker)
+            await worker_agent._run_sdk(card, "card_id", "agent/api/card-345678", tracker)
 
         assert captured_kwargs["cwd"] == str(worker_agent.repo_dir)
         assert "add_dirs" not in captured_kwargs
@@ -356,17 +373,12 @@ class TestRunSdk:
         tracker.record_activity = MagicMock()
         captured_kwargs = {}
 
-        def mock_validate(data):
-            captured_kwargs.update(data)
-            return MagicMock()
-
         with patch("app.apps.agent.worker.query") as mock_query, \
-             patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts, \
-             patch("app.apps.agent.worker.build_worker_mcp_server") as mock_mcp:
-            mock_opts.model_validate = mock_validate
-            mock_mcp.return_value = MagicMock()
+             patch("app.apps.agent.worker.ClaudeAgentOptions", side_effect=lambda **kw: captured_kwargs.update(kw) or MagicMock()), \
+             patch("app.apps.agent.worker.build_worker_mcp_server", return_value=MagicMock()), \
+             patch("app.apps.agent.worker.get_card_actions", new_callable=AsyncMock, return_value=[]):
             mock_query.return_value = aiter_from([])
-            await comment_worker._run_sdk(card, "", tracker)
+            await comment_worker._run_sdk(card, "card_id", "", tracker)
 
         assert str(comment_worker.repo_dir) in captured_kwargs["add_dirs"]
         assert "cwd" not in captured_kwargs
@@ -378,17 +390,12 @@ class TestRunSdk:
         tracker.record_activity = MagicMock()
         captured_kwargs = {}
 
-        def mock_validate(data):
-            captured_kwargs.update(data)
-            return MagicMock()
-
         with patch("app.apps.agent.worker.query") as mock_query, \
-             patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts, \
-             patch("app.apps.agent.worker.build_mcp_server") as mock_mcp:
-            mock_opts.model_validate = mock_validate
-            mock_mcp.return_value = MagicMock()
+             patch("app.apps.agent.worker.ClaudeAgentOptions", side_effect=lambda **kw: captured_kwargs.update(kw) or MagicMock()), \
+             patch("app.apps.agent.worker.build_mcp_server", return_value=MagicMock()) as mock_mcp, \
+             patch("app.apps.agent.worker.get_card_actions", new_callable=AsyncMock, return_value=[]):
             mock_query.return_value = aiter_from([])
-            await cards_worker._run_sdk(card, "", tracker)
+            await cards_worker._run_sdk(card, "card_id", "", tracker)
 
         mock_mcp.assert_called_once_with("karavan_worker")
         assert "karavan" in captured_kwargs["mcp_servers"]
@@ -402,85 +409,84 @@ class TestRunSdk:
         tracker.record_activity = MagicMock()
         captured_kwargs = {}
 
-        def mock_validate(data):
-            captured_kwargs.update(data)
-            return MagicMock()
-
         with patch("app.apps.agent.worker.query") as mock_query, \
-             patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts, \
-             patch("app.apps.agent.worker.build_worker_mcp_server") as mock_mcp:
-            mock_opts.model_validate = mock_validate
-            mock_mcp.return_value = MagicMock()
+             patch("app.apps.agent.worker.ClaudeAgentOptions", side_effect=lambda **kw: captured_kwargs.update(kw) or MagicMock()), \
+             patch("app.apps.agent.worker.build_worker_mcp_server", return_value=MagicMock()) as mock_mcp, \
+             patch("app.apps.agent.worker.get_card_actions", new_callable=AsyncMock, return_value=[]):
             mock_query.return_value = aiter_from([])
-            await worker_agent._run_sdk(card, "branch", tracker)
+            await worker_agent._run_sdk(card, "card_id", "branch", tracker)
 
         mock_mcp.assert_called_once()
         assert "karavan" in captured_kwargs["mcp_servers"]
         assert "route_card" in captured_kwargs["allowed_tools"]
 
     async def test_collects_result_from_result_message(self, worker_agent):
-        """Extracts result text, cost, and usage from the final ResultMessage."""
+        """Extracts result text, cost, and usage from AssistantMessage + ResultMessage."""
         card = make_card()
         tracker = MagicMock()
         tracker.record_activity = MagicMock()
 
+        # AssistantMessage with TextBlock content for text extraction
+        text_block = MagicMock(spec=TextBlock)
+        text_block.text = "I changed file X."
+        assistant_msg = MagicMock(spec=AssistantMessage)
+        assistant_msg.content = [text_block]
+
+        # ResultMessage with cost/usage
         result_msg = MagicMock()
         result_msg.total_cost_usd = 0.05
         result_msg.usage = {"input_tokens": 1000, "output_tokens": 500}
-        result_msg.result = "I changed file X."
 
         with patch("app.apps.agent.worker.query") as mock_query, \
-             patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts, \
-             patch("app.apps.agent.worker.build_worker_mcp_server"):
-            mock_opts.model_validate = MagicMock(return_value=MagicMock())
-            mock_query.return_value = aiter_from([result_msg])
-            text, cost, usage = await worker_agent._run_sdk(card, "branch", tracker)
+             patch("app.apps.agent.worker.ClaudeAgentOptions", return_value=MagicMock()), \
+             patch("app.apps.agent.worker.build_worker_mcp_server"), \
+             patch("app.apps.agent.worker.get_card_actions", new_callable=AsyncMock, return_value=[]):
+            mock_query.return_value = aiter_from([assistant_msg, result_msg])
+            text, cost, usage = await worker_agent._run_sdk(card, "card_id", "branch", tracker)
 
         assert text == "I changed file X."
         assert cost == 0.05
         assert usage == {"input_tokens": 1000, "output_tokens": 500}
-        tracker.record_activity.assert_called_once_with(result_msg)
 
-    async def test_timeout_raises(self, worker_agent):
-        """SDK query that exceeds sdk_timeout raises TimeoutError."""
+    async def test_timeout_triggers_wrapup(self, worker_agent):
+        """SDK query that exceeds sdk_timeout triggers wrapup instead of raising."""
         import asyncio
 
         card = make_card()
         tracker = MagicMock()
         tracker.record_activity = MagicMock()
-        worker_agent.config.sdk_timeout = 60  # will be overridden by mock
-
-        async def _hang():
-            await asyncio.sleep(999)
-            yield  # never reached
+        worker_agent.config.sdk_timeout = 60
 
         with patch("app.apps.agent.worker.query") as mock_query, \
-             patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts, \
+             patch("app.apps.agent.worker.ClaudeAgentOptions", return_value=MagicMock()), \
              patch("app.apps.agent.worker.build_worker_mcp_server"), \
-             patch("app.apps.agent.worker.asyncio.wait_for", side_effect=asyncio.TimeoutError):
-            mock_opts.model_validate = MagicMock(return_value=MagicMock())
-            mock_query.return_value = _hang()
-            with pytest.raises(TimeoutError, match="SDK query timed out"):
-                await worker_agent._run_sdk(card, "branch", tracker)
+             patch("app.apps.agent.worker.get_card_actions", new_callable=AsyncMock, return_value=[]), \
+             patch("app.apps.agent.worker.asyncio.wait_for", side_effect=asyncio.TimeoutError), \
+             patch.object(worker_agent, "_run_wrapup", new_callable=AsyncMock, return_value=("wrapup result", 0.01, None)) as mock_wrapup:
+            mock_query.return_value = aiter_from([])
+            text, cost, usage = await worker_agent._run_sdk(card, "card_id", "branch", tracker)
+
+        mock_wrapup.assert_awaited_once()
+        assert text == "wrapup result"
 
     async def test_timeout_value_from_config(self, worker_agent):
-        """sdk_timeout config value is passed to asyncio.wait_for."""
+        """sdk_timeout config value is split 80/20 for main work vs wrapup."""
         card = make_card()
         tracker = MagicMock()
         tracker.record_activity = MagicMock()
         worker_agent.config.sdk_timeout = 900
 
         with patch("app.apps.agent.worker.query") as mock_query, \
-             patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts, \
+             patch("app.apps.agent.worker.ClaudeAgentOptions", return_value=MagicMock()), \
              patch("app.apps.agent.worker.build_worker_mcp_server"), \
+             patch("app.apps.agent.worker.get_card_actions", new_callable=AsyncMock, return_value=[]), \
              patch("app.apps.agent.worker.asyncio.wait_for", new_callable=AsyncMock) as mock_wait:
-            mock_opts.model_validate = MagicMock(return_value=MagicMock())
             mock_query.return_value = aiter_from([])
             mock_wait.return_value = ("", None, None)
-            await worker_agent._run_sdk(card, "branch", tracker)
+            await worker_agent._run_sdk(card, "card_id", "branch", tracker)
 
         mock_wait.assert_awaited_once()
-        assert mock_wait.call_args[1]["timeout"] == 900
+        assert mock_wait.call_args[1]["timeout"] == 720  # 80% of 900
 
 
 # --- _deliver_output ---
@@ -523,34 +529,28 @@ class TestDeliverOutput:
         call_text = mock_comment.call_args[0][1]
         assert len(call_text) <= 510  # 500 + some slack
 
-    async def test_update_mode_updates_description(self, update_worker):
-        """Update mode appends to the card description with section delimiter."""
+    async def test_update_mode_posts_output_comment(self, update_worker):
+        """Update mode posts agent output as a tagged comment."""
         card = make_card()
-        existing_card = make_card()
-        existing_card.desc = "Original description"
-        with patch("app.apps.agent.worker.get_card", new_callable=AsyncMock, return_value=existing_card), \
-             patch("app.apps.agent.worker.update_card", new_callable=AsyncMock) as mock_update, \
-             patch("app.apps.agent.worker.add_comment", new_callable=AsyncMock) as mock_comment:
-            result = await update_worker._deliver_output(card, "card_id", "", "New description", 0.01, MagicMock())
+        with patch("app.apps.agent.worker.add_comment", new_callable=AsyncMock) as mock_comment:
+            result = await update_worker._deliver_output(card, "card_id", "", "Analysis result", 0.01, MagicMock())
         assert result is True
-        new_desc = mock_update.call_args.kwargs["desc"]
-        assert new_desc.startswith("Original description")
-        assert "\n\n---\n\n" in new_desc
-        assert "### improver" in new_desc
-        assert "New description" in new_desc
-        call_text = mock_comment.call_args[0][1]
-        assert "Description updated" in call_text
-        assert "$0.0100" in call_text
+        # First call: output comment, second call: cost comment
+        output_text = mock_comment.call_args_list[0][0][1]
+        assert output_text.startswith("[karavan:output:improver]")
+        assert "Analysis result" in output_text
+        cost_text = mock_comment.call_args_list[1][0][1]
+        assert "Output posted by improver" in cost_text
+        assert "$0.0100" in cost_text
 
-    async def test_update_mode_no_text_skips_update(self, update_worker):
-        """Update mode does not call update_card when result text is empty."""
+    async def test_update_mode_no_text_skips_output_comment(self, update_worker):
+        """Update mode does not post output comment when result text is empty."""
         card = make_card()
-        with patch("app.apps.agent.worker.update_card", new_callable=AsyncMock) as mock_update, \
-             patch("app.apps.agent.worker.add_comment", new_callable=AsyncMock):
+        with patch("app.apps.agent.worker.add_comment", new_callable=AsyncMock) as mock_comment:
             await update_worker._deliver_output(card, "card_id", "", "", 0.01, MagicMock())
-        # update_card should only be called for cost comment, not for desc
-        for call in mock_update.call_args_list:
-            assert "desc" not in (call.kwargs or {})
+        # Only the cost comment, no output comment
+        assert mock_comment.call_count == 1
+        assert "Output posted by" in mock_comment.call_args[0][1]
 
 
 # --- _deliver_pr ---

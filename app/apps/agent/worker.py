@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 FAIL_PREFIX = "[karavan:fail]"
 BOUNCE_PREFIX = "[karavan:bounce]"
-SECTION_DELIMITER = "\n\n---\n\n"
+OUTPUT_PREFIX = "[karavan:output:"
+OUTPUT_MAX_CHARS = 16000  # safe limit under Trello's 16384 per comment
 
 
 def _parse_repo_url(repo_url: str) -> tuple[str, str]:
@@ -177,7 +178,29 @@ class WorkerAgent(BaseAgent):
         if self.config.repo_access == "write":
             await create_branch(self.repo_dir, branch_name)
 
-    def _build_prompt(self, card: object, branch_name: str) -> str:
+    async def _get_output_comments(self, card_id: str) -> list[tuple[str, str]]:
+        """Fetch agent output comments from a card, in chronological order.
+
+        Returns (agent_name, text) tuples.
+        """
+        actions = await get_card_actions(card_id)
+        outputs: list[tuple[str, str]] = []
+        for action in reversed(actions):  # API returns newest first
+            text = action.get("data", {}).get("text", "")
+            if not text.startswith(OUTPUT_PREFIX):
+                continue
+            first_nl = text.find("\n")
+            if first_nl == -1:
+                continue
+            header = text[:first_nl]
+            if not header.endswith("]"):
+                continue
+            agent_name = header[len(OUTPUT_PREFIX):-1]
+            body = text[first_nl + 1:]
+            outputs.append((agent_name, body))
+        return outputs
+
+    async def _build_prompt(self, card: object, card_id: str, branch_name: str) -> str:
         """Build the SDK prompt based on output_mode and repo_access."""
         mode = self.config.output_mode
         parts: list[str] = [f"# Task: {card.name}\n"]
@@ -195,7 +218,7 @@ class WorkerAgent(BaseAgent):
         elif mode == "update":
             parts.append(
                 "You are a worker agent in the Karavan system. Your job is to **analyze the task and produce your section of the card**.\n\n"
-                "Your output will be APPENDED to the card description verbatim — do NOT repeat or rewrite previous sections.\n"
+                "Your output will be posted as a comment on the card — do NOT repeat or rewrite previous agents' output.\n"
                 "Your FINAL TEXT RESPONSE is what gets saved. It must contain your COMPLETE structured output following the exact format in your system prompt. Do not summarize or abbreviate.\n"
             )
 
@@ -229,8 +252,8 @@ class WorkerAgent(BaseAgent):
             parts.append("- **DO** set dependencies between cards when order matters.")
             parts.append("- **DO NOT** modify any files — use only the MCP tools to create cards.")
         elif mode == "update":
-            parts.append("- **DO** read the full card to understand prior agents' work.")
-            parts.append("- **DO** produce only YOUR section — do not repeat or rewrite previous sections.")
+            parts.append("- **DO** read the full card and prior agent output to understand context.")
+            parts.append("- **DO** produce only YOUR section — do not repeat or rewrite previous agents' output.")
             parts.append("- **DO** output the COMPLETE structured format from your system prompt — every numbered section, every field, every bullet.")
             parts.append("- **DO NOT** summarize, abbreviate, or skip sections. The full output IS the deliverable.")
             parts.append("- **DO NOT** modify any files.")
@@ -240,6 +263,14 @@ class WorkerAgent(BaseAgent):
         parts.append("## Card Description")
         parts.append(card.desc)
         parts.append("")
+
+        # Prior agent output from comments
+        output_comments = await self._get_output_comments(card_id)
+        if output_comments:
+            parts.append("## Prior Agent Output")
+            for agent_name, body in output_comments:
+                parts.append(f"### {agent_name}\n{body}")
+            parts.append("")
 
         # Completion — what to output when done
         parts.append("## Completion")
@@ -251,16 +282,16 @@ class WorkerAgent(BaseAgent):
             parts.append("When you are done creating cards, briefly summarize what cards you created and why.")
         elif mode == "update":
             parts.append(
-                "Your final text response will be appended to the card description as-is.\n"
+                "Your final text response will be posted as a comment on the card.\n"
                 "Output your COMPLETE analysis now — every section, every bullet, every field defined in your system prompt's output format.\n"
                 "Do NOT write a summary. Do NOT say 'here is my analysis'. Just output the structured content directly."
             )
 
         return "\n".join(parts)
 
-    async def _run_sdk(self, card: object, branch_name: str, tracker: ProgressTracker) -> tuple[str, float | None, dict | None]:
+    async def _run_sdk(self, card: object, card_id: str, branch_name: str, tracker: ProgressTracker) -> tuple[str, float | None, dict | None]:
         """Run the Claude Agent SDK query with config-driven options."""
-        prompt = self._build_prompt(card, branch_name)
+        prompt = await self._build_prompt(card, card_id, branch_name)
 
         # Build SDK options
         sdk_kwargs: dict = {
@@ -398,12 +429,15 @@ class WorkerAgent(BaseAgent):
             return True
         elif mode == "update":
             if result_text:
-                current_card = await get_card(card_id)
-                section_header = f"### {self.name}"
-                new_desc = (current_card.desc or "") + SECTION_DELIMITER + section_header + "\n\n" + result_text
-                await update_card(card_id, desc=new_desc)
+                # Split into multiple comments if output exceeds Trello's per-comment limit
+                remaining = result_text
+                while remaining:
+                    chunk = remaining[:OUTPUT_MAX_CHARS]
+                    remaining = remaining[OUTPUT_MAX_CHARS:]
+                    comment_text = f"{OUTPUT_PREFIX}{self.name}]\n{chunk}"
+                    await add_comment(card_id, comment_text)
             if cost is not None:
-                await add_comment(card_id, f"Description updated by {self.name}. Cost: ${cost:.4f}")
+                await add_comment(card_id, f"Output posted by {self.name}. Cost: ${cost:.4f}")
             return True
         else:
             raise ValueError(f"Unknown output_mode: {mode}")
@@ -483,7 +517,7 @@ class WorkerAgent(BaseAgent):
             await self._setup_repo(branch_name)
 
             # 3. Run Claude Agent SDK
-            result_text, execution_cost, execution_usage = await self._run_sdk(card, branch_name, tracker)
+            result_text, execution_cost, execution_usage = await self._run_sdk(card, card_id, branch_name, tracker)
 
             # 4. Record cost
             cost_tracker.record(self.name, execution_cost, execution_usage, card_id=card_id)

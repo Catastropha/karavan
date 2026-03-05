@@ -11,7 +11,7 @@ import httpx
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
 from app.apps.trello.crud.create import create_card
-from app.apps.trello.crud.read import get_card, get_list_cards
+from app.apps.trello.crud.read import get_card, get_card_actions, get_list_cards
 from app.apps.trello.model.input import CardCreateIn
 from app.core.config import BoardConfig, WorkerAgentConfig, settings
 
@@ -193,9 +193,10 @@ async def create_trello_card_tool(args: dict) -> dict:
     },
 )
 async def get_card_status_tool(args: dict) -> dict:
-    """Fetch a card and return its current state."""
+    """Fetch a card and return its current state, including agent output comments."""
     try:
-        card = await get_card(args["card_id"])
+        card_id = args["card_id"]
+        card = await get_card(card_id)
         result = {"id": card.id, "name": card.name, "description": card.desc, "url": card.url}
 
         resolved_list = _resolve_list(card.id_list)
@@ -208,6 +209,23 @@ async def get_card_status_tool(args: dict) -> dict:
         resolved_worker = _resolve_worker_from_labels(card.id_labels)
         if resolved_worker:
             result["worker"], _ = resolved_worker
+
+        # Include agent output comments
+        output_prefix = "[karavan:output:"
+        actions = await get_card_actions(card_id)
+        outputs = []
+        for action in reversed(actions):  # chronological order
+            text = action.get("data", {}).get("text", "")
+            if not text.startswith(output_prefix):
+                continue
+            first_nl = text.find("\n")
+            if first_nl == -1 or not text[:first_nl].endswith("]"):
+                continue
+            agent_name = text[len(output_prefix):first_nl - 1]
+            body = text[first_nl + 1:]
+            outputs.append({"agent": agent_name, "output": body})
+        if outputs:
+            result["agent_outputs"] = outputs
 
         return _text_result(json.dumps(result, indent=2))
     except Exception as e:

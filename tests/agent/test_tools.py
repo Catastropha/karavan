@@ -301,6 +301,7 @@ class TestGetCardStatusTool:
         mock_card.id_labels = ["lbl_api"]
 
         with patch("app.apps.agent.tools.get_card", new_callable=AsyncMock, return_value=mock_card), \
+             patch("app.apps.agent.tools.get_card_actions", new_callable=AsyncMock, return_value=[]), \
              patch("app.apps.agent.tools._resolve_list", return_value=("main", "doing")), \
              patch("app.apps.agent.tools._resolve_worker_from_labels", return_value=("api", "main")):
             result = await _get_card_status({"card_id": "card_123"})
@@ -322,6 +323,7 @@ class TestGetCardStatusTool:
         mock_card.id_labels = []
 
         with patch("app.apps.agent.tools.get_card", new_callable=AsyncMock, return_value=mock_card), \
+             patch("app.apps.agent.tools.get_card_actions", new_callable=AsyncMock, return_value=[]), \
              patch("app.apps.agent.tools._resolve_list", return_value=None), \
              patch("app.apps.agent.tools._resolve_worker_from_labels", return_value=None):
             result = await _get_card_status({"card_id": "card_123"})
@@ -401,7 +403,8 @@ class TestMcpToolNames:
         assert "get_card_status" in MCP_TOOL_NAMES
         assert "get_board_cards" in MCP_TOOL_NAMES
         assert "route_card" in MCP_TOOL_NAMES
-        assert len(MCP_TOOL_NAMES) == 5
+        assert "web_fetch" in MCP_TOOL_NAMES
+        assert len(MCP_TOOL_NAMES) == 6
 
 
 # --- build_mcp_server ---
@@ -524,4 +527,4 @@ class TestBuildWorkerMcpServer:
         call_kwargs = mock_create.call_args
         tools = call_kwargs.kwargs.get("tools", call_kwargs[1].get("tools", []))
         tool_names = [t.name for t in tools]
-        assert len(tool_names) == 5  # 4 standard + route_card
+        assert len(tool_names) == 6  # 4 standard + route_card + web_fetch

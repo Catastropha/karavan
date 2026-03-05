@@ -64,8 +64,8 @@ class TestUpdateCard:
 
         await update_card("c1", desc="New description")
 
-        params = trello_client.put.call_args.kwargs["params"]
-        assert params["desc"] == "New description"
+        data = trello_client.put.call_args.kwargs["data"]
+        assert data["desc"] == "New description"
 
     async def test_desc_included_when_empty_string(self, trello_client, make_response):
         """Empty string desc is intentional (clear description) and should be sent."""
@@ -73,16 +73,16 @@ class TestUpdateCard:
 
         await update_card("c1", desc="")
 
-        params = trello_client.put.call_args.kwargs["params"]
-        assert params["desc"] == ""
+        data = trello_client.put.call_args.kwargs["data"]
+        assert data["desc"] == ""
 
     async def test_desc_omitted_when_none(self, trello_client, make_response):
         trello_client.put.return_value = make_response({"id": "c1", "name": "Card"})
 
         await update_card("c1")
 
-        params = trello_client.put.call_args.kwargs["params"]
-        assert "desc" not in params
+        data = trello_client.put.call_args.kwargs["data"]
+        assert "desc" not in data
 
     async def test_auth_params_included(self, trello_client, make_response):
         trello_client.put.return_value = make_response({"id": "c1", "name": "Card"})
@@ -122,13 +122,14 @@ class TestAddComment:
         args = trello_client.post.call_args.args
         assert args == ("cards/card_abc/actions/comments",)
 
-    async def test_sends_text_param(self, trello_client, make_response):
+    async def test_sends_text_in_body(self, trello_client, make_response):
         trello_client.post.return_value = make_response({})
 
         await add_comment("card1", "This is the comment text")
 
+        data = trello_client.post.call_args.kwargs["data"]
+        assert data["text"] == "This is the comment text"
         params = trello_client.post.call_args.kwargs["params"]
-        assert params["text"] == "This is the comment text"
         assert params["key"] == "test_key"
         assert params["token"] == "test_token"
 
