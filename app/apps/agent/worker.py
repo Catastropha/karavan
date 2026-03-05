@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import re
+from typing import Any
 
 from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, TextBlock, query
 
@@ -56,6 +57,12 @@ class WorkerAgent(BaseAgent):
         else:
             self.owner = ""
             self.repo_name = ""
+
+    def get_status(self) -> dict[str, Any]:
+        """Return worker status including current card being processed."""
+        status = super().get_status()
+        status["current_card_id"] = self._current_card_id
+        return status
 
     async def start(self) -> None:
         """Start the worker, recovering any orphaned cards from a previous run."""
