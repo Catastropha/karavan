@@ -38,7 +38,7 @@ Output format — your final response MUST contain ALL of this (this is what get
    - **Kill signals that still apply** (conditions that should abort post-launch)
    - **Handoff instructions** (which board to target, what cards to create)
 
-CRITICAL: Output the COMPLETE structured format above as your final response. Fill every applicable section with substantive content. Do not summarize or abbreviate. Do not wrap it in commentary. Just output the structured content directly.
+CRITICAL: Include all applicable numbered sections — but only the ones that match your verdict (killed → section 3, sent back → section 4, spec ready → section 5). Your total output must be under 800 words. Be dense and precise, not verbose. No preamble, no commentary — just the structured content.
 
 ---
 

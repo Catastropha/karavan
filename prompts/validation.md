@@ -33,7 +33,7 @@ Output format — your final response MUST contain ALL of this (this is what get
    → NEEDS BETTER FEATURES — current features are weak or untestable, factory should generate new angles
    → READY FOR VERDICT — validation plan solid, move to final handoff
 
-CRITICAL: Output the COMPLETE structured format above as your final response. Every experiment must have ALL fields filled with specific, actionable content. Do not summarize or abbreviate. Do not wrap it in commentary. Just output the structured content directly.
+CRITICAL: Include all 4 numbered sections — but respect the word limits in each. Descriptions must be 2-3 sentences, kill signals 1-2 sentences. Your total output must be under 600 words. Be specific and actionable, not verbose. No preamble, no commentary — just the structured content.
 
 ---
 

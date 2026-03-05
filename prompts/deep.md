@@ -34,7 +34,7 @@ Output format — your final response MUST contain ALL of this (this is what get
    → NEEDS MORE CONTEXT — what's missing and why triage should re-evaluate
    → READY FOR FACTORY — strongest lever confirmed, move forward
 
-CRITICAL: Output the COMPLETE structured format above as your final response. Every numbered section, every table row, every bullet must be present with substantive content. Do not summarize or abbreviate. Do not wrap it in commentary. Just output the structured content directly.
+CRITICAL: Include all 5 numbered sections — but respect the word limits in each (2-3 sentences means 2-3 sentences, not 5). Your total output must be under 800 words. Be dense and evidence-rich, not verbose. No preamble, no commentary — just the structured content.
 
 ---
 

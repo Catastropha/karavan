@@ -29,7 +29,7 @@ Output format — your final response MUST contain ALL of this (this is what get
    → NEEDS DEEPER RESEARCH — specific gaps that deep research should investigate
    → READY FOR VALIDATION — flagship direction selected, move forward
 
-CRITICAL: Output the COMPLETE structured format above as your final response. Every feature must have ALL five columns filled with substantive content. Do not summarize or abbreviate. Do not wrap it in commentary. Just output the structured content directly.
+CRITICAL: Include all 4 numbered sections — but respect the word limits in each. Feature descriptions must be 2-3 sentences, not paragraphs. Your total output must be under 800 words. Be dense, not verbose. No preamble, no commentary — just the structured content.
 
 ---
 
