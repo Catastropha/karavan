@@ -7,7 +7,7 @@ import re
 from claude_agent_sdk import ClaudeAgentOptions, query
 
 from app.apps.agent.base import BaseAgent
-from app.apps.agent.tools import MCP_TOOL_NAMES, build_mcp_server
+from app.apps.agent.tools import MCP_TOOL_NAMES, build_mcp_server, build_worker_mcp_server, get_routing_decision
 from app.apps.git_manager.crud.create import clone_repo, create_branch
 from app.apps.git_manager.crud.update import commit_and_push, create_pr, pull_base
 from app.apps.git_manager.model.input import PRCreateIn
@@ -169,7 +169,7 @@ class WorkerAgent(BaseAgent):
         elif mode == "cards":
             parts.append(
                 "You are a worker agent in the Karavan system. Your job is to **break down the task below into concrete, actionable sub-tasks** and create Trello cards for each using the available MCP tools.\n\n"
-                "Use `list_workers` to discover available workers and their todo list IDs, then use `create_trello_card` to create cards.\n"
+                "Use `list_boards` to discover available boards and their workers, then use `create_trello_card` to create cards.\n"
             )
         elif mode == "update":
             parts.append(
@@ -202,7 +202,7 @@ class WorkerAgent(BaseAgent):
             parts.append("- **DO** reference specific files and line numbers when relevant.")
             parts.append("- **DO NOT** modify any files — this is a read-only analysis task.")
         elif mode == "cards":
-            parts.append("- **DO** use `list_workers` to find available workers before creating cards.")
+            parts.append("- **DO** use `list_boards` to find available boards before creating cards.")
             parts.append("- **DO** follow the card schema format (## Task, ## Context, ## Acceptance Criteria).")
             parts.append("- **DO** set dependencies between cards when order matters.")
             parts.append("- **DO NOT** modify any files — use only the MCP tools to create cards.")
@@ -252,9 +252,12 @@ class WorkerAgent(BaseAgent):
         elif self.config.repo_access == "read":
             sdk_kwargs["add_dirs"] = [str(self.repo_dir)]
 
+        # All workers get MCP tools (route_card for routing, plus cards-mode tools)
         if self.config.output_mode == "cards":
             sdk_kwargs["mcp_servers"] = {"karavan": build_mcp_server("karavan_worker")}
-            sdk_kwargs["allowed_tools"] = list({*sdk_kwargs["allowed_tools"], *MCP_TOOL_NAMES})
+        else:
+            sdk_kwargs["mcp_servers"] = {"karavan": build_worker_mcp_server("karavan_worker", self._current_card_id or "")}
+        sdk_kwargs["allowed_tools"] = list({*sdk_kwargs["allowed_tools"], *MCP_TOOL_NAMES})
 
         # Run the SDK query and collect results
         async def _consume() -> tuple[str, float | None, dict | None]:
@@ -410,10 +413,24 @@ class WorkerAgent(BaseAgent):
             self._current_card_id = None
 
     async def _transition_card(self, card_id: str, card_name: str) -> None:
-        """Move card to done or hand off to next pipeline stage."""
+        """Move card to done or route to another worker via route_card decision."""
         try:
-            if self.config.next_stage:
-                next_worker = self.board.workers[self.config.next_stage]
+            target_name = get_routing_decision(card_id)
+            if target_name:
+                # Validate target worker exists on the same board
+                if target_name not in self.board.workers:
+                    logger.error(
+                        "Worker %s: route_card target '%s' not on board, moving to done",
+                        self.name, target_name,
+                    )
+                    await add_comment(
+                        card_id,
+                        f"route_card target '{target_name}' not found on this board. Card moved to done instead.",
+                    )
+                    target_name = None
+
+            if target_name:
+                next_worker = self.board.workers[target_name]
                 await update_card(card_id, id_list=self.board.lists.todo)
                 # Add next label BEFORE removing ours — card briefly has two
                 # labels but is never orphaned without any label.

@@ -59,7 +59,7 @@ def cards_worker_config():
         "label_id": "lbl_planner",
         "repo_access": "none",
         "output_mode": "cards",
-        "allowed_tools": ["list_workers", "create_trello_card"],
+        "allowed_tools": ["list_boards", "create_trello_card"],
         "system_prompt": "You are a planner.",
     })
 
@@ -78,8 +78,8 @@ def update_worker_config():
 
 
 @pytest.fixture
-def pipeline_worker_config():
-    """Write-mode worker config that hands off to a next stage."""
+def routing_worker_config():
+    """Write-mode worker config for testing route_card routing."""
     return WorkerAgentConfig.model_validate({
         "label_id": "lbl_api",
         "repo": "git@github.com:testowner/testrepo.git",
@@ -88,7 +88,6 @@ def pipeline_worker_config():
         "system_prompt": "You are a test agent.",
         "repo_access": "write",
         "output_mode": "pr",
-        "next_stage": "reviewer",
     })
 
 
@@ -104,14 +103,14 @@ def board_config(worker_config, worker_lists):
 
 
 @pytest.fixture
-def pipeline_board_config(pipeline_worker_config, comment_worker_config, worker_lists):
-    """Board config with two workers in a pipeline: api → reviewer."""
+def multi_worker_board_config(routing_worker_config, comment_worker_config, worker_lists):
+    """Board config with two workers for testing route_card: api + reviewer."""
     return BoardConfig.model_validate({
         "board_id": "board_123",
         "failed_list_id": "failed_list_id",
         "lists": worker_lists.model_dump(),
         "workers": {
-            "api": pipeline_worker_config.model_dump(),
+            "api": routing_worker_config.model_dump(),
             "reviewer": comment_worker_config.model_dump(),
         },
     })
@@ -155,9 +154,9 @@ def update_worker(update_worker_config, board_config):
 
 
 @pytest.fixture
-def pipeline_worker(pipeline_worker_config, pipeline_board_config):
-    """Create a WorkerAgent with next_stage set (api → reviewer)."""
-    return WorkerAgent("api", pipeline_worker_config, pipeline_board_config)
+def routing_worker(routing_worker_config, multi_worker_board_config):
+    """Create a WorkerAgent on a multi-worker board for testing route_card."""
+    return WorkerAgent("api", routing_worker_config, multi_worker_board_config)
 
 
 # --- Shared helpers ---

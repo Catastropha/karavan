@@ -1,4 +1,4 @@
-"""Tests for agent MCP tools — list_workers, create_trello_card, get_card_status, get_board_cards."""
+"""Tests for agent MCP tools — list_boards, create_trello_card, get_card_status, get_board_cards."""
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,12 +18,12 @@ from app.apps.agent.tools import (
     get_board_cards_tool,
     get_card_status_tool,
     get_routing_decision,
-    list_workers_tool,
+    list_boards_tool,
 )
 
 # The @tool decorator wraps functions into SdkMcpTool objects.
 # Access the original async function via .handler for direct testing.
-_list_workers = list_workers_tool.handler
+_list_boards = list_boards_tool.handler
 _create_trello_card = create_trello_card_tool.handler
 _get_card_status = get_card_status_tool.handler
 _get_board_cards = get_board_cards_tool.handler
@@ -133,10 +133,10 @@ class TestResolveWorkerFromLabels:
         assert result is None
 
 
-# --- list_workers_tool ---
+# --- list_boards_tool ---
 
 
-class TestListWorkersTool:
+class TestListBoardsTool:
     async def test_returns_boards_with_workers(self):
         """Lists all boards with their workers nested inside."""
         worker = _mock_worker(label_id="lbl_api")
@@ -144,7 +144,7 @@ class TestListWorkersTool:
 
         with patch("app.apps.agent.tools.settings") as mock_settings:
             mock_settings.boards = {"main": board}
-            result = await _list_workers({})
+            result = await _list_boards({})
 
         data = json.loads(result["content"][0]["text"])
         assert len(data) == 1
@@ -159,7 +159,7 @@ class TestListWorkersTool:
         """Returns message when no boards are configured."""
         with patch("app.apps.agent.tools.settings") as mock_settings:
             mock_settings.boards = {}
-            result = await _list_workers({})
+            result = await _list_boards({})
         assert "No boards configured" in result["content"][0]["text"]
 
 
@@ -396,7 +396,7 @@ class TestGetBoardCardsTool:
 
 class TestMcpToolNames:
     def test_contains_all_tools(self):
-        assert "list_workers" in MCP_TOOL_NAMES
+        assert "list_boards" in MCP_TOOL_NAMES
         assert "create_trello_card" in MCP_TOOL_NAMES
         assert "get_card_status" in MCP_TOOL_NAMES
         assert "get_board_cards" in MCP_TOOL_NAMES
@@ -512,7 +512,7 @@ class TestBuildWorkerMcpServer:
         tools = call_kwargs.kwargs.get("tools", call_kwargs[1].get("tools", []))
         tool_names = [t.name for t in tools]
         assert "route_card" in tool_names
-        assert "list_workers" in tool_names
+        assert "list_boards" in tool_names
         assert "create_trello_card" in tool_names
 
     def test_includes_all_standard_tools(self):

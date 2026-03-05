@@ -39,7 +39,6 @@ class WorkerAgentConfig(BaseModel):
     """Configuration for a worker agent."""
 
     label_id: Annotated[str, Field(min_length=1, description="Trello label ID that routes cards to this worker")]
-    next_stage: Annotated[str | None, Field(default=None, description="Worker name for the next pipeline stage (None = terminal)")]
     repo: Annotated[str, Field(default="", description="Git repo SSH URL (required when repo_access is 'write')")]
     branch_prefix: Annotated[str, Field(default="", description="Branch prefix (required when repo_access is 'write')")]
     base_branch: Annotated[str, Field(default="main", description="Base branch to pull and target PRs against")]
@@ -84,23 +83,6 @@ class BoardConfig(BaseModel):
     lists: Annotated[WorkerListsConfig, Field(description="Shared Trello list IDs (todo/doing/done)")]
     workers: Annotated[dict[str, WorkerAgentConfig], Field(default_factory=dict, description="Worker agents on this board")]
 
-    @model_validator(mode="after")
-    def _validate_pipeline(self) -> "BoardConfig":
-        """Validate that next_stage references point to workers on this board and contain no cycles."""
-        for name, worker in self.workers.items():
-            if worker.next_stage and worker.next_stage not in self.workers:
-                raise ValueError(f"Worker '{name}' next_stage '{worker.next_stage}' not found on this board")
-
-        # Detect cycles: follow each chain, if we visit more workers than exist, there's a cycle
-        for name in self.workers:
-            seen: set[str] = set()
-            current: str | None = name
-            while current:
-                if current in seen:
-                    raise ValueError(f"Pipeline cycle detected at '{current}'")
-                seen.add(current)
-                current = self.workers[current].next_stage
-        return self
 
 
 class OrchestratorAgentConfig(BaseModel):

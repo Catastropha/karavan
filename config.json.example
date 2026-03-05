@@ -68,10 +68,9 @@
       "workers": {
         "researcher": {
           "label_id": "trello_label_id",
-          "next_stage": "research_critic",
           "repo_access": "none",
           "output_mode": "update",
-          "system_prompt": "You are a research agent. Gather and analyze information."
+          "system_prompt": "You are a research agent. Gather and analyze information. When done, call route_card(target='research_critic', reason='Ready for critique') to send to the critic."
         },
         "research_critic": {
           "label_id": "trello_label_id",

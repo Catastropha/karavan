@@ -76,12 +76,12 @@ def _resolve_worker_from_labels(id_labels: list[str]) -> tuple[str, str] | None:
 # --- Tool definitions ---
 
 @tool(
-    "list_workers",
-    "List all boards and their worker agents. "
+    "list_boards",
+    "List all boards, their descriptions, and their worker agents. "
     "Use this to find the correct board_name when creating cards.",
     {},
 )
-async def list_workers_tool(args: dict) -> dict:
+async def list_boards_tool(args: dict) -> dict:
     """Return all boards with their workers."""
     boards = []
     for board_name, board in settings.boards.items():
@@ -251,7 +251,7 @@ async def get_board_cards_tool(args: dict) -> dict:
 
 
 MCP_TOOL_NAMES: list[str] = [
-    "list_workers", "create_trello_card", "get_card_status", "get_board_cards", "route_card",
+    "list_boards", "create_trello_card", "get_card_status", "get_board_cards", "route_card",
 ]
 
 
@@ -260,7 +260,7 @@ def build_mcp_server(name: str = "karavan"):
     return create_sdk_mcp_server(
         name=name,
         version="0.1.0",
-        tools=[list_workers_tool, create_trello_card_tool, get_card_status_tool, get_board_cards_tool],
+        tools=[list_boards_tool, create_trello_card_tool, get_card_status_tool, get_board_cards_tool],
     )
 
 
@@ -278,7 +278,7 @@ def build_worker_mcp_server(name: str, card_id: str):
             "properties": {
                 "target": {
                     "type": "string",
-                    "description": "Name of the worker agent to route this card to (use list_workers to find names)",
+                    "description": "Name of the worker agent to route this card to (use list_boards to find names)",
                 },
                 "reason": {
                     "type": "string",
@@ -306,5 +306,5 @@ def build_worker_mcp_server(name: str, card_id: str):
     return create_sdk_mcp_server(
         name=name,
         version="0.1.0",
-        tools=[list_workers_tool, create_trello_card_tool, get_card_status_tool, get_board_cards_tool, route_card_tool],
+        tools=[list_boards_tool, create_trello_card_tool, get_card_status_tool, get_board_cards_tool, route_card_tool],
     )

@@ -300,7 +300,7 @@ class TestBuildPrompt:
         card = make_card()
         prompt = cards_worker._build_prompt(card, "")
         assert "break down" in prompt
-        assert "list_workers" in prompt
+        assert "list_boards" in prompt
         assert "create_trello_card" in prompt
 
     def test_update_mode_prompt(self, update_worker):
@@ -339,8 +339,10 @@ class TestRunSdk:
             return MagicMock()
 
         with patch("app.apps.agent.worker.query") as mock_query, \
-             patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts:
+             patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts, \
+             patch("app.apps.agent.worker.build_worker_mcp_server") as mock_mcp:
             mock_opts.model_validate = mock_validate
+            mock_mcp.return_value = MagicMock()
             mock_query.return_value = aiter_from([])
             await worker_agent._run_sdk(card, "agent/api/card-345678", tracker)
 
@@ -359,16 +361,18 @@ class TestRunSdk:
             return MagicMock()
 
         with patch("app.apps.agent.worker.query") as mock_query, \
-             patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts:
+             patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts, \
+             patch("app.apps.agent.worker.build_worker_mcp_server") as mock_mcp:
             mock_opts.model_validate = mock_validate
+            mock_mcp.return_value = MagicMock()
             mock_query.return_value = aiter_from([])
             await comment_worker._run_sdk(card, "", tracker)
 
         assert str(comment_worker.repo_dir) in captured_kwargs["add_dirs"]
         assert "cwd" not in captured_kwargs
 
-    async def test_cards_mode_adds_mcp_tools(self, cards_worker):
-        """Cards-mode includes MCP server and tool names in SDK kwargs."""
+    async def test_cards_mode_uses_orchestrator_mcp_server(self, cards_worker):
+        """Cards-mode uses build_mcp_server (not build_worker_mcp_server)."""
         card = make_card()
         tracker = MagicMock()
         tracker.record_activity = MagicMock()
@@ -388,8 +392,31 @@ class TestRunSdk:
 
         mock_mcp.assert_called_once_with("karavan_worker")
         assert "karavan" in captured_kwargs["mcp_servers"]
-        assert "list_workers" in captured_kwargs["allowed_tools"]
+        assert "list_boards" in captured_kwargs["allowed_tools"]
         assert "create_trello_card" in captured_kwargs["allowed_tools"]
+
+    async def test_non_cards_mode_uses_worker_mcp_server(self, worker_agent):
+        """Non-cards mode uses build_worker_mcp_server with route_card."""
+        card = make_card()
+        tracker = MagicMock()
+        tracker.record_activity = MagicMock()
+        captured_kwargs = {}
+
+        def mock_validate(data):
+            captured_kwargs.update(data)
+            return MagicMock()
+
+        with patch("app.apps.agent.worker.query") as mock_query, \
+             patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts, \
+             patch("app.apps.agent.worker.build_worker_mcp_server") as mock_mcp:
+            mock_opts.model_validate = mock_validate
+            mock_mcp.return_value = MagicMock()
+            mock_query.return_value = aiter_from([])
+            await worker_agent._run_sdk(card, "branch", tracker)
+
+        mock_mcp.assert_called_once()
+        assert "karavan" in captured_kwargs["mcp_servers"]
+        assert "route_card" in captured_kwargs["allowed_tools"]
 
     async def test_collects_result_from_result_message(self, worker_agent):
         """Extracts result text, cost, and usage from the final ResultMessage."""
@@ -403,7 +430,8 @@ class TestRunSdk:
         result_msg.result = "I changed file X."
 
         with patch("app.apps.agent.worker.query") as mock_query, \
-             patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts:
+             patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts, \
+             patch("app.apps.agent.worker.build_worker_mcp_server"):
             mock_opts.model_validate = MagicMock(return_value=MagicMock())
             mock_query.return_value = aiter_from([result_msg])
             text, cost, usage = await worker_agent._run_sdk(card, "branch", tracker)
@@ -428,6 +456,7 @@ class TestRunSdk:
 
         with patch("app.apps.agent.worker.query") as mock_query, \
              patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts, \
+             patch("app.apps.agent.worker.build_worker_mcp_server"), \
              patch("app.apps.agent.worker.asyncio.wait_for", side_effect=asyncio.TimeoutError):
             mock_opts.model_validate = MagicMock(return_value=MagicMock())
             mock_query.return_value = _hang()
@@ -443,6 +472,7 @@ class TestRunSdk:
 
         with patch("app.apps.agent.worker.query") as mock_query, \
              patch("app.apps.agent.worker.ClaudeAgentOptions") as mock_opts, \
+             patch("app.apps.agent.worker.build_worker_mcp_server"), \
              patch("app.apps.agent.worker.asyncio.wait_for", new_callable=AsyncMock) as mock_wait:
             mock_opts.model_validate = MagicMock(return_value=MagicMock())
             mock_query.return_value = aiter_from([])
@@ -687,16 +717,17 @@ class TestExecuteCard:
 
 class TestTransitionCard:
     async def test_terminal_moves_to_done_and_removes_label(self, worker_agent):
-        """Terminal worker (no next_stage) moves card to done and removes label."""
-        with patch("app.apps.agent.worker.update_card", new_callable=AsyncMock) as mock_update, \
+        """No routing decision → card moves to done and label is removed."""
+        with patch("app.apps.agent.worker.get_routing_decision", return_value=None), \
+             patch("app.apps.agent.worker.update_card", new_callable=AsyncMock) as mock_update, \
              patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock) as mock_remove:
             await worker_agent._transition_card("card_id", "Test task")
 
         mock_update.assert_awaited_once_with("card_id", id_list="done_list_id")
         mock_remove.assert_awaited_once_with("card_id", "lbl_api")
 
-    async def test_pipeline_adds_next_label_before_removing_own(self, pipeline_worker):
-        """Pipeline worker adds next label before removing its own — never orphaned."""
+    async def test_route_decision_adds_target_label_before_removing_own(self, routing_worker):
+        """route_card decision adds target label before removing own — never orphaned."""
         call_order = []
 
         async def track_add(card_id, label_id):
@@ -705,30 +736,56 @@ class TestTransitionCard:
         async def track_remove(card_id, label_id):
             call_order.append(("remove", label_id))
 
-        with patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
+        with patch("app.apps.agent.worker.get_routing_decision", return_value="reviewer"), \
+             patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
              patch("app.apps.agent.worker.add_label", new_callable=AsyncMock, side_effect=track_add), \
              patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock, side_effect=track_remove):
-            await pipeline_worker._transition_card("card_id", "Test task")
+            await routing_worker._transition_card("card_id", "Test task")
 
         assert call_order == [("add", "lbl_reviewer"), ("remove", "lbl_api")]
 
-    async def test_pipeline_add_label_failure_keeps_own_label(self, pipeline_worker):
-        """If adding next label fails, own label stays — card is not orphaned."""
-        with patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
+    async def test_route_decision_moves_to_todo(self, routing_worker):
+        """route_card decision moves card to todo list for the target worker."""
+        with patch("app.apps.agent.worker.get_routing_decision", return_value="reviewer"), \
+             patch("app.apps.agent.worker.update_card", new_callable=AsyncMock) as mock_update, \
+             patch("app.apps.agent.worker.add_label", new_callable=AsyncMock), \
+             patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock):
+            await routing_worker._transition_card("card_id", "Test task")
+
+        mock_update.assert_awaited_once_with("card_id", id_list="todo_list_id")
+
+    async def test_route_invalid_target_falls_back_to_done(self, routing_worker):
+        """route_card with invalid target (not on board) falls back to done."""
+        with patch("app.apps.agent.worker.get_routing_decision", return_value="nonexistent"), \
+             patch("app.apps.agent.worker.update_card", new_callable=AsyncMock) as mock_update, \
+             patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock), \
+             patch("app.apps.agent.worker.add_comment", new_callable=AsyncMock) as mock_comment:
+            await routing_worker._transition_card("card_id", "Test task")
+
+        mock_update.assert_awaited_once_with("card_id", id_list="done_list_id")
+        comment_text = mock_comment.call_args[0][1]
+        assert "nonexistent" in comment_text
+        assert "not found" in comment_text
+
+    async def test_route_add_label_failure_keeps_own_label(self, routing_worker):
+        """If adding target label fails, own label stays — card is not orphaned."""
+        with patch("app.apps.agent.worker.get_routing_decision", return_value="reviewer"), \
+             patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
              patch("app.apps.agent.worker.add_label", new_callable=AsyncMock, side_effect=RuntimeError("API error")), \
              patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock) as mock_remove, \
              patch("app.apps.agent.worker.add_comment", new_callable=AsyncMock):
-            await pipeline_worker._transition_card("card_id", "Test task")
+            await routing_worker._transition_card("card_id", "Test task")
 
         # Own label should NOT have been removed since add_label failed first
         mock_remove.assert_not_awaited()
 
-    async def test_pipeline_remove_label_failure_is_harmless(self, pipeline_worker):
-        """If removing own label fails after next label added, card has two labels — harmless."""
-        with patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
+    async def test_route_remove_label_failure_is_harmless(self, routing_worker):
+        """If removing own label fails after target label added, card has two labels — harmless."""
+        with patch("app.apps.agent.worker.get_routing_decision", return_value="reviewer"), \
+             patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
              patch("app.apps.agent.worker.add_label", new_callable=AsyncMock), \
              patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock, side_effect=RuntimeError("API error")):
-            await pipeline_worker._transition_card("card_id", "Test task")  # Should not raise
+            await routing_worker._transition_card("card_id", "Test task")  # Should not raise
 
 
 # --- Retry logic ---
