@@ -93,8 +93,8 @@ Workers are not hardcoded to one lifecycle. Three orthogonal config axes make be
 
 | Profile | Tools | Use case |
 |---------|-------|----------|
-| Full coding | `["Read", "Write", "Edit", "Bash", "Glob", "Grep"]` | Default — code workers |
-| Read-only | `["Read", "Glob", "Grep"]` | Reviewers, analysts |
+| Full coding | `["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"]` | Default — code workers |
+| Read-only | `["Read", "Glob", "Grep", "WebSearch", "WebFetch"]` | Reviewers, analysts |
 | MCP-only | `["list_workers", "create_trello_card", ...]` | Orchestrator, card creators |
 
 **Config validation rules:**

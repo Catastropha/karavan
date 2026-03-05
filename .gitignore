@@ -3,7 +3,7 @@ repos/
 
 # Deployment config (contains Trello list IDs, repo URLs, etc.)
 config.json
-prompts/
+
 _devops/Caddyfile
 
 # Byte-compiled / optimized / DLL files

@@ -53,7 +53,7 @@ class WorkerAgentConfig(BaseModel):
     ]
     allowed_tools: Annotated[
         list[str],
-        Field(default_factory=lambda: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"], description="Tools available to the Claude SDK agent"),
+        Field(default_factory=lambda: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"], description="Tools available to the Claude SDK agent"),
     ]
     sdk_timeout: Annotated[
         int,
