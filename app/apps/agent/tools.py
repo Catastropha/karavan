@@ -271,7 +271,7 @@ async def web_fetch_tool(args: dict) -> dict:
     try:
         async with httpx.AsyncClient(timeout=WEB_FETCH_TIMEOUT, follow_redirects=True) as client:
             resp = await client.get(url)
-            return _text_result(resp.text[:50000])
+            return _text_result(resp.text[:200000])
     except httpx.TimeoutException:
         return _text_result(f"Timeout fetching {url} after {WEB_FETCH_TIMEOUT}s", is_error=True)
     except Exception as e:
