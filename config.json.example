@@ -1,4 +1,5 @@
 {
+  "model": "claude-sonnet-4-20250514",
   "boards": {
     "api-bot": {
       "board_id": "",

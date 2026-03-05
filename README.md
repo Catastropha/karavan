@@ -102,7 +102,15 @@ You need tokens from four services:
 1. Create a new Trello board for your project
 2. Create three shared lists: `Todo`, `Doing`, `Done` — all workers on the board share them
 3. Create one **Failed** list for cards that exhaust retries or bounces
-4. Copy the **board ID** — it's in the board URL: `trello.com/b/AbCdEfGh/my-board` → `AbCdEfGh`
+4. Get the **board ID** — the short slug in the URL (`trello.com/b/AbCdEfGh/my-board` → `AbCdEfGh`) is NOT the board ID. You need the full 24-character hex ID. Get it via the API:
+   ```bash
+   curl "https://api.trello.com/1/boards/AbCdEfGh?key={key}&token={token}&fields=id,name"
+   ```
+   This returns the full ID:
+   ```json
+   { "id": "6830abc123def456abc12300", "name": "My Board" }
+   ```
+   Use the `id` value → `board_id` in your config.
 5. Get all **list IDs** using the API:
    ```bash
    curl "https://api.trello.com/1/boards/{board_id}/lists?key={key}&token={token}"
@@ -186,6 +194,7 @@ The minimal setup: one Trello board with a single code worker and an orchestrato
 
 ```json
 {
+  "model": "claude-sonnet-4-20250514",
   "boards": {
     "myproject": {
       "board_id": "6830abc123def456abc12300",
@@ -224,6 +233,7 @@ A richer setup: a coding board with a coder and reviewer, plus a research board 
 
 ```json
 {
+  "model": "claude-sonnet-4-20250514",
   "boards": {
     "backend": {
       "board_id": "6830abc123def456abc12300",
@@ -341,9 +351,11 @@ Caddy automatically provisions Let's Encrypt HTTPS certificates. Karavan starts 
 **Useful commands:**
 
 ```bash
-docker compose -f _devops/docker-compose.yml logs -f karavan  # follow app logs
-docker compose -f _devops/docker-compose.yml restart karavan   # restart after config change
-docker compose -f _devops/docker-compose.yml down              # stop everything
+docker compose -f _devops/docker-compose.yml build karavan      # rebuild after code changes
+docker compose -f _devops/docker-compose.yml up -d karavan      # start (or restart with new image)
+docker compose -f _devops/docker-compose.yml logs -f karavan    # follow app logs
+docker compose -f _devops/docker-compose.yml restart karavan     # restart after config change
+docker compose -f _devops/docker-compose.yml down                # stop everything
 ```
 
 **Without Docker** (alternative — run directly):

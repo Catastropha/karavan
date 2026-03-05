@@ -136,6 +136,7 @@ class Settings(BaseSettings):
 
     # Topology — loaded from config.json
     config_json_path: Annotated[str, Field(default="", description="Path to config.json (default: BASE_DIR/config.json)")]
+    model: Annotated[str, Field(default="", description="Claude model ID for all agents (e.g. claude-sonnet-4-20250514)")]
     boards: Annotated[dict[str, BoardConfig], Field(default_factory=dict, description="Board configurations")]
     orchestrator: Annotated[OrchestratorAgentConfig | None, Field(default=None, description="Orchestrator configuration")]
 
@@ -146,6 +147,10 @@ class Settings(BaseSettings):
             if config_path.exists():
                 with open(config_path) as f:
                     data = json.load(f)
+
+                # Parse top-level model
+                if data.get("model"):
+                    self.model = data["model"]
 
                 # Parse boards
                 boards_raw = data.get("boards", {})

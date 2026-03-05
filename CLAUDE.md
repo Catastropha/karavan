@@ -208,11 +208,17 @@ TRELLO_API_SECRET=            # Trello OAuth secret, used for webhook HMAC-SHA1 
 
 ### Topology — `config.json` (safe to commit, no secrets)
 
+Top-level config fields:
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `model` | no | SDK default (Sonnet) | Claude model ID for all agents (e.g. `claude-sonnet-4-20250514`, `claude-opus-4-20250918`) |
+
 Board config fields:
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `board_id` | yes | — | Trello board ID |
+| `board_id` | yes | — | Trello board ID (full 24-char hex from API, NOT the short slug in the board URL) |
 | `description` | no | `""` | Human-readable purpose of this board |
 | `failed_list_id` | yes | — | Trello list ID for failed cards |
 | `max_bounces` | no | `3` | Maximum `route_card` bounces before a card is killed |
@@ -236,6 +242,7 @@ Simple example — one board, one coder:
 
 ```json
 {
+  "model": "claude-sonnet-4-20250514",
   "boards": {
     "myproject": {
       "board_id": "trello_board_id",
@@ -266,6 +273,7 @@ Advanced example — multiple boards, mixed agent types:
 
 ```json
 {
+  "model": "claude-sonnet-4-20250514",
   "boards": {
     "backend": {
       "board_id": "trello_board_id",

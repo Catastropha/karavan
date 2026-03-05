@@ -15,7 +15,7 @@ from app.apps.trello.crud.read import get_card, get_card_actions, get_list_cards
 from app.apps.trello.crud.update import add_comment, add_label, remove_label, update_card
 from app.common.cost import cost_tracker
 from app.common.progress import ProgressTracker
-from app.core.config import BASE_DIR, BoardConfig, WorkerAgentConfig
+from app.core.config import BASE_DIR, BoardConfig, WorkerAgentConfig, settings
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +259,8 @@ class WorkerAgent(BaseAgent):
             "setting_sources": ["project"],
             "max_turns": 50,
         }
+        if settings.model:
+            sdk_kwargs["model"] = settings.model
 
         if self.config.repo_access == "write":
             sdk_kwargs["cwd"] = str(self.repo_dir)
