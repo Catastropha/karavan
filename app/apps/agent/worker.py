@@ -294,27 +294,79 @@ class WorkerAgent(BaseAgent):
         # it closes stdin and MCP tool calls fail with "Stream closed".
         os.environ["CLAUDE_CODE_STREAM_CLOSE_TIMEOUT"] = str(self.config.sdk_timeout * 1000)
 
-        # Run the SDK query and collect results
+        # Shared state — survives timeout so partial work is not lost
+        collected: dict = {"text": "", "cost": None, "usage": None}
+
         async def _consume() -> tuple[str, float | None, dict | None]:
-            last_assistant_text = ""
-            cost: float | None = None
-            usage: dict | None = None
             async for message in query(prompt=prompt, options=ClaudeAgentOptions(**sdk_kwargs)):
                 tracker.record_activity(message)
-                # Capture full text from assistant messages (not just the result summary)
                 if isinstance(message, AssistantMessage):
                     blocks = [b.text for b in message.content if isinstance(b, TextBlock)]
                     if blocks:
-                        last_assistant_text = "\n\n".join(blocks)
+                        text = "\n\n".join(blocks)
+                        # Keep the longest assistant message — the structured output,
+                        # not the brief "card routed" confirmation after tool calls.
+                        if len(text) > len(collected["text"]):
+                            collected["text"] = text
                 if hasattr(message, "total_cost_usd"):
-                    cost = message.total_cost_usd
-                    usage = message.usage
-            return last_assistant_text, cost, usage
+                    collected["cost"] = message.total_cost_usd
+                    collected["usage"] = message.usage
+            return collected["text"], collected["cost"], collected["usage"]
+
+        # Two-phase timeout: 80% for main work, 20% reserved for wrap-up
+        main_timeout = int(self.config.sdk_timeout * 0.8)
+        wrapup_timeout = self.config.sdk_timeout - main_timeout
 
         try:
-            return await asyncio.wait_for(_consume(), timeout=self.config.sdk_timeout)
+            return await asyncio.wait_for(_consume(), timeout=main_timeout)
         except asyncio.TimeoutError:
-            raise TimeoutError(f"SDK query timed out after {self.config.sdk_timeout}s") from None
+            logger.warning(
+                "Worker %s: SDK timed out after %ds, running wrap-up query (%ds remaining)",
+                self.name, main_timeout, wrapup_timeout,
+            )
+            return await self._run_wrapup(collected, sdk_kwargs, wrapup_timeout)
+
+    async def _run_wrapup(
+        self,
+        collected: dict,
+        sdk_kwargs: dict,
+        timeout: int,
+    ) -> tuple[str, float | None, dict | None]:
+        """Run a short follow-up query to finalize partial output after timeout."""
+        partial = collected["text"] or "(no output captured)"
+        wrapup_prompt = (
+            "You ran out of time. Below is your work so far.\n\n"
+            "---\n\n"
+            f"{partial}\n\n"
+            "---\n\n"
+            "Produce your COMPLETE final output NOW following the exact format in your system prompt. "
+            "Use ONLY what you already have — do not search or fetch anything new. "
+            "Every numbered section must be present. Output the structured content directly."
+        )
+
+        # Strip tools and MCP — wrap-up is pure text generation
+        wrapup_kwargs = {**sdk_kwargs}
+        wrapup_kwargs["allowed_tools"] = []
+        wrapup_kwargs.pop("mcp_servers", None)
+        wrapup_kwargs["max_turns"] = 1
+
+        wrapup_text = ""
+        try:
+            async for message in query(prompt=wrapup_prompt, options=ClaudeAgentOptions(**wrapup_kwargs)):
+                if isinstance(message, AssistantMessage):
+                    blocks = [b.text for b in message.content if isinstance(b, TextBlock)]
+                    if blocks:
+                        wrapup_text = "\n\n".join(blocks)
+                if hasattr(message, "total_cost_usd"):
+                    cost = collected["cost"]
+                    if message.total_cost_usd:
+                        cost = (cost or 0) + message.total_cost_usd
+                    collected["cost"] = cost
+                    collected["usage"] = message.usage
+        except Exception:
+            logger.exception("Worker %s: wrap-up query failed, using partial output", self.name)
+
+        return wrapup_text or collected["text"], collected["cost"], collected["usage"]
 
     async def _deliver_output(
         self,
