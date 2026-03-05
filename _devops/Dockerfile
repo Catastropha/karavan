@@ -18,4 +18,4 @@ RUN mkdir -p /home/karavan/.ssh && chown karavan:karavan /home/karavan/.ssh
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "chown -R karavan:karavan /opt/karavan/repos && cp /tmp/ssh_key/id_ed25519 /home/karavan/.ssh/id_ed25519 && chmod 600 /home/karavan/.ssh/id_ed25519 && chown karavan:karavan /home/karavan/.ssh/id_ed25519 && exec gosu karavan uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "chown karavan:karavan /opt/karavan/repos && git config --global safe.directory '*' && cp /tmp/ssh_key/id_ed25519 /home/karavan/.ssh/id_ed25519 && chmod 600 /home/karavan/.ssh/id_ed25519 && chown karavan:karavan /home/karavan/.ssh/id_ed25519 && exec gosu karavan uvicorn app.main:app --host 0.0.0.0 --port 8000"]
