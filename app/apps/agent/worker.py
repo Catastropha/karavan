@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import re
 
 from claude_agent_sdk import ClaudeAgentOptions, query
@@ -273,6 +274,11 @@ class WorkerAgent(BaseAgent):
         else:
             sdk_kwargs["mcp_servers"] = {"karavan": build_worker_mcp_server("karavan_worker", self._current_card_id or "")}
         sdk_kwargs["allowed_tools"] = list({*sdk_kwargs["allowed_tools"], *MCP_TOOL_NAMES})
+
+        # Keep the MCP bidirectional channel open for the full SDK timeout.
+        # The SDK defaults CLAUDE_CODE_STREAM_CLOSE_TIMEOUT to 60s — after that
+        # it closes stdin and MCP tool calls fail with "Stream closed".
+        os.environ["CLAUDE_CODE_STREAM_CLOSE_TIMEOUT"] = str(self.config.sdk_timeout * 1000)
 
         # Run the SDK query and collect results
         async def _consume() -> tuple[str, float | None, dict | None]:
