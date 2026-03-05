@@ -7,6 +7,7 @@ check card status, and route cards to other workers.
 import json
 import logging
 
+import httpx
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
 from app.apps.trello.crud.create import create_card
@@ -250,8 +251,35 @@ async def get_board_cards_tool(args: dict) -> dict:
         return _text_result(f"Failed to get cards: {e}", is_error=True)
 
 
+WEB_FETCH_TIMEOUT = 10
+
+
+@tool(
+    "web_fetch",
+    "Fetch a URL and return its text content. Use this instead of WebFetch. Timeout: 10 seconds.",
+    {
+        "type": "object",
+        "properties": {
+            "url": {"type": "string", "description": "The URL to fetch"},
+        },
+        "required": ["url"],
+    },
+)
+async def web_fetch_tool(args: dict) -> dict:
+    """Fetch a URL with a hard timeout."""
+    url = args["url"]
+    try:
+        async with httpx.AsyncClient(timeout=WEB_FETCH_TIMEOUT, follow_redirects=True) as client:
+            resp = await client.get(url)
+            return _text_result(resp.text[:50000])
+    except httpx.TimeoutException:
+        return _text_result(f"Timeout fetching {url} after {WEB_FETCH_TIMEOUT}s", is_error=True)
+    except Exception as e:
+        return _text_result(f"Failed to fetch {url}: {e}", is_error=True)
+
+
 MCP_TOOL_NAMES: list[str] = [
-    "list_boards", "create_trello_card", "get_card_status", "get_board_cards", "route_card",
+    "list_boards", "create_trello_card", "get_card_status", "get_board_cards", "route_card", "web_fetch",
 ]
 
 
@@ -260,7 +288,7 @@ def build_mcp_server(name: str = "karavan"):
     return create_sdk_mcp_server(
         name=name,
         version="0.1.0",
-        tools=[list_boards_tool, create_trello_card_tool, get_card_status_tool, get_board_cards_tool],
+        tools=[list_boards_tool, create_trello_card_tool, get_card_status_tool, get_board_cards_tool, web_fetch_tool],
     )
 
 
@@ -306,5 +334,5 @@ def build_worker_mcp_server(name: str, card_id: str):
     return create_sdk_mcp_server(
         name=name,
         version="0.1.0",
-        tools=[list_boards_tool, create_trello_card_tool, get_card_status_tool, get_board_cards_tool, route_card_tool],
+        tools=[list_boards_tool, create_trello_card_tool, get_card_status_tool, get_board_cards_tool, route_card_tool, web_fetch_tool],
     )

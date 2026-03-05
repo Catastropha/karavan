@@ -53,7 +53,7 @@ class WorkerAgentConfig(BaseModel):
     ]
     allowed_tools: Annotated[
         list[str],
-        Field(default_factory=lambda: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"], description="Tools available to the Claude SDK agent"),
+        Field(default_factory=lambda: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch"], description="Tools available to the Claude SDK agent (web_fetch MCP tool replaces WebFetch)"),
     ]
     sdk_timeout: Annotated[
         int,
@@ -98,7 +98,7 @@ class OrchestratorAgentConfig(BaseModel):
     system_prompt: Annotated[str, Field(default="", description="System prompt for Claude (use @path/to/file.md to load from file)")]
     allowed_tools: Annotated[
         list[str],
-        Field(default_factory=lambda: ["Read", "Glob", "Grep", "WebSearch", "WebFetch"], description="SDK tools available to the orchestrator (MCP tools are always added)"),
+        Field(default_factory=lambda: ["Read", "Glob", "Grep", "WebSearch"], description="SDK tools available to the orchestrator (MCP tools always added, web_fetch replaces WebFetch)"),
     ]
 
     @model_validator(mode="after")
