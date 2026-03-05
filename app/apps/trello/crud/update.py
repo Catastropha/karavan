@@ -14,9 +14,11 @@ async def update_card(card_id: str, *, id_list: str = "", desc: str | None = Non
     params = auth_params()
     if id_list:
         params["idList"] = id_list
+    # Send desc in the request body to avoid 414 URI Too Large on long descriptions
+    data = {}
     if desc is not None:
-        params["desc"] = desc
-    resp = await res.trello_client.put(f"cards/{card_id}", params=params)
+        data["desc"] = desc
+    resp = await res.trello_client.put(f"cards/{card_id}", params=params, data=data)
     resp.raise_for_status()
     logger.info("Updated card %s", card_id)
     return CardOut.model_validate(resp.json())
@@ -39,8 +41,9 @@ async def remove_label(card_id: str, label_id: str) -> None:
 
 async def add_comment(card_id: str, text: str) -> dict:
     """Add a comment to a Trello card."""
-    params = {**auth_params(), "text": text}
-    resp = await res.trello_client.post(f"cards/{card_id}/actions/comments", params=params)
+    resp = await res.trello_client.post(
+        f"cards/{card_id}/actions/comments", params=auth_params(), data={"text": text},
+    )
     resp.raise_for_status()
     logger.info("Added comment to card %s", card_id)
     return resp.json()
