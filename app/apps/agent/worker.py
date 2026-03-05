@@ -5,7 +5,7 @@ import logging
 import os
 import re
 
-from claude_agent_sdk import ClaudeAgentOptions, query
+from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, TextBlock, query
 
 from app.apps.agent.base import BaseAgent
 from app.apps.agent.tools import MCP_TOOL_NAMES, build_mcp_server, build_worker_mcp_server, get_routing_decision
@@ -289,16 +289,20 @@ class WorkerAgent(BaseAgent):
 
         # Run the SDK query and collect results
         async def _consume() -> tuple[str, float | None, dict | None]:
-            text = ""
+            last_assistant_text = ""
             cost: float | None = None
             usage: dict | None = None
             async for message in query(prompt=prompt, options=ClaudeAgentOptions(**sdk_kwargs)):
                 tracker.record_activity(message)
+                # Capture full text from assistant messages (not just the result summary)
+                if isinstance(message, AssistantMessage):
+                    blocks = [b.text for b in message.content if isinstance(b, TextBlock)]
+                    if blocks:
+                        last_assistant_text = "\n\n".join(blocks)
                 if hasattr(message, "total_cost_usd"):
                     cost = message.total_cost_usd
                     usage = message.usage
-                    text = getattr(message, "result", "") or ""
-            return text, cost, usage
+            return last_assistant_text, cost, usage
 
         try:
             return await asyncio.wait_for(_consume(), timeout=self.config.sdk_timeout)
