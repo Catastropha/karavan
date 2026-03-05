@@ -188,7 +188,8 @@ class WorkerAgent(BaseAgent):
         elif mode == "update":
             parts.append(
                 "You are a worker agent in the Karavan system. Your job is to **analyze the task and produce your section of the card**.\n\n"
-                "Your output will be APPENDED to the card — do NOT repeat or rewrite previous sections.\n"
+                "Your output will be APPENDED to the card description verbatim — do NOT repeat or rewrite previous sections.\n"
+                "Your FINAL TEXT RESPONSE is what gets saved. It must contain your COMPLETE structured output following the exact format in your system prompt. Do not summarize or abbreviate.\n"
             )
 
         # Repo context (when applicable)
@@ -223,7 +224,9 @@ class WorkerAgent(BaseAgent):
         elif mode == "update":
             parts.append("- **DO** read the full card to understand prior agents' work.")
             parts.append("- **DO** produce only YOUR section — do not repeat or rewrite previous sections.")
-            parts.append("- **DO NOT** modify any files — your text output IS the deliverable.")
+            parts.append("- **DO** output the COMPLETE structured format from your system prompt — every numbered section, every field, every bullet.")
+            parts.append("- **DO NOT** summarize, abbreviate, or skip sections. The full output IS the deliverable.")
+            parts.append("- **DO NOT** modify any files.")
         parts.append("")
 
         # Card description
@@ -240,7 +243,11 @@ class WorkerAgent(BaseAgent):
         elif mode == "cards":
             parts.append("When you are done creating cards, briefly summarize what cards you created and why.")
         elif mode == "update":
-            parts.append("Output your analysis section now. It will be appended under a delimiter.")
+            parts.append(
+                "Your final text response will be appended to the card description as-is.\n"
+                "Output your COMPLETE analysis now — every section, every bullet, every field defined in your system prompt's output format.\n"
+                "Do NOT write a summary. Do NOT say 'here is my analysis'. Just output the structured content directly."
+            )
 
         return "\n".join(parts)
 

@@ -13,19 +13,23 @@ Rules:
 - Include at least 2–3 "sci-fi but plausible in 5–10 years" ideas.
 - For each feature: one-sentence description + 100x multiplier + biggest risk + one cheap test.
 
-Output format:
+Output format — your final response MUST contain ALL of this (this is what gets written to the card):
 
-1. Summary of input idea + triage + research summary (2 sentences)
+1. **Input Summary** (exactly 2 sentences — idea + triage + research distilled)
 
-2. 100x Feature Portfolio (5–12 items)
-   Feature name | 100x multiplier | Description | Risk level | Cheapest validation wedge
+2. **100x Feature Portfolio** (5–12 items, each with ALL columns filled)
+   - Feature name | 100x multiplier | Description (2-3 sentences) | Risk level (Low/Med/High) | Cheapest validation wedge (specific, actionable)
 
-3. Recommended flagship direction (the single best one)
+3. **Recommended Flagship Direction**
+   - Name the single best feature and explain why in 3-5 sentences
+   - Include: why this one wins, target user, 100x mechanism, biggest risk
 
-4. Verdict (one line)
+4. **Verdict** (one line)
    → KILLED — zero features survived, idea is exhausted
    → NEEDS DEEPER RESEARCH — specific gaps that deep research should investigate
    → READY FOR VALIDATION — flagship direction selected, move forward
+
+CRITICAL: Output the COMPLETE structured format above as your final response. Every feature must have ALL five columns filled with substantive content. Do not summarize or abbreviate. Do not wrap it in commentary. Just output the structured content directly.
 
 ---
 

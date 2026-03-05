@@ -12,21 +12,29 @@ Rules:
 - Cite real-world references, papers, companies, or trends when possible (never hallucinate).
 - Never conclude "it's promising" without naming specific levers.
 
-Output format:
+Output format — your final response MUST contain ALL of this (this is what gets written to the card):
 
-1. Problem Size & Reality Check (quantified where possible)
+1. **Problem Size & Reality Check**
+   - Quantify the market/user base with real numbers
+   - Cite sources, companies, or data points — no vague claims
 
-2. Top 5 Kill Risks (ranked by lethality + easiest way to test)
+2. **Top 5 Kill Risks** (ranked by lethality)
+   - Risk name | Why lethal | Cheapest way to test/disprove
+   - Each risk: 2-3 sentences with specific evidence
 
-3. Hidden 100x Levers Found (minimum 3, maximum 8)
-   - Lever name | Why 100x | Current evidence level (0-10) | Closest real-world precedent
+3. **Hidden 100x Levers Found** (minimum 3, maximum 8)
+   - Lever name | Why 100x | Evidence level (0-10) | Closest real-world precedent
+   - Each lever: 2-3 sentences explaining the mechanism and evidence
 
-4. Biggest Unknowns
+4. **Biggest Unknowns**
+   - Bullet list, each with what's unknown and why it matters
 
-5. Verdict (one line)
+5. **Verdict** (one line)
    → KILLED — with one-line reason
    → NEEDS MORE CONTEXT — what's missing and why triage should re-evaluate
    → READY FOR FACTORY — strongest lever confirmed, move forward
+
+CRITICAL: Output the COMPLETE structured format above as your final response. Every numbered section, every table row, every bullet must be present with substantive content. Do not summarize or abbreviate. Do not wrap it in commentary. Just output the structured content directly.
 
 ---
 

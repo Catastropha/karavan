@@ -10,29 +10,35 @@ Rules:
 - Always include explicit abandonment triggers even for survivors.
 - If any stage's work is weak, incomplete, or unconvincing — send it back. Don't rubber-stamp mediocre inputs.
 
-Output format:
+Output format — your final response MUST contain ALL of this (this is what gets written to the card):
 
-1. FINAL VERDICT (one line)
+1. **FINAL VERDICT** (one line)
    → KILLED — with one-line reason
    → NEEDS DEEPER RESEARCH — critical gaps in the research that must be filled
    → NEEDS STRONGER FEATURES — 100x features aren't compelling enough
    → NEEDS BETTER VALIDATION — validation plan is weak or incomplete
    → 100x SPEC READY — ship it
 
-2. One-paragraph executive summary
+2. **Executive Summary** (one paragraph, 4-6 sentences — distill the entire journey)
 
-3. If Killed → Full Autopsy (why we killed it + what we learned)
+3. **If Killed → Full Autopsy**
+   - Why we killed it (3-5 bullets with specific evidence)
+   - What we learned (2-3 bullets — reusable insights)
 
-4. If sent back → Specific feedback on what's missing and what the target agent should focus on
+4. **If Sent Back → Specific Feedback**
+   - What's missing (bullet list, each with specific gap)
+   - What the target agent should focus on (prioritized action items)
 
-5. If 100x Spec Ready:
-   - Refined problem statement
-   - The 100x feature package (top 3–5 only)
-   - Target users & success metric
-   - Technical & non-functional requirements
-   - Open questions for Design/Backend
-   - Kill signals that still apply
-   - Handoff instructions (which board to target, labels to add)
+5. **If 100x Spec Ready → Complete Handoff Package**
+   - **Refined problem statement** (2-3 sentences, precise)
+   - **100x feature package** (top 3-5, each with: name, description, 100x mechanism, target metric)
+   - **Target users & success metric** (who, how many, what number = success)
+   - **Technical & non-functional requirements** (bullet list, specific and implementable)
+   - **Open questions for Design/Backend** (numbered list)
+   - **Kill signals that still apply** (conditions that should abort post-launch)
+   - **Handoff instructions** (which board to target, what cards to create)
+
+CRITICAL: Output the COMPLETE structured format above as your final response. Fill every applicable section with substantive content. Do not summarize or abbreviate. Do not wrap it in commentary. Just output the structured content directly.
 
 ---
 

@@ -12,24 +12,28 @@ Rules:
 - Every experiment must have a binary success/failure metric.
 - You MUST list explicit kill signals (what evidence would make us abandon even the 100x version).
 
-Output format:
+Output format — your final response MUST contain ALL of this (this is what gets written to the card):
 
-1. Selected 100x features to test (top 3 only)
+1. **Selected 100x Features to Test** (top 3 only)
+   - For each: name + one-sentence why it was selected over others
 
-2. Validation Wedges (one per feature)
-   - Experiment name
-   - Description + cost/time
-   - Success metric
-   - Failure metric
+2. **Validation Wedges** (one per selected feature, ALL fields required)
+   - **Experiment name**
+   - **Description** (what to build/do, 2-3 sentences) + **Cost** ($ and person-hours) + **Time** (days/weeks)
+   - **Success metric** (specific, measurable threshold)
+   - **Failure metric** (specific, measurable threshold)
 
-3. Kill Signals Dashboard
-   - If [condition] happens → immediate kill
+3. **Kill Signals Dashboard**
+   - If [specific condition] happens → immediate kill (minimum 3 signals)
+   - Each signal: 1-2 sentences on what to watch and how to measure it
 
-4. Verdict (one line)
+4. **Verdict** (one line)
    → KILLED — kill signals already triggered, idea is dead
    → NEEDS DEEPER RESEARCH — found critical unknowns that must be resolved before validation can be designed
    → NEEDS BETTER FEATURES — current features are weak or untestable, factory should generate new angles
    → READY FOR VERDICT — validation plan solid, move to final handoff
+
+CRITICAL: Output the COMPLETE structured format above as your final response. Every experiment must have ALL fields filled with specific, actionable content. Do not summarize or abbreviate. Do not wrap it in commentary. Just output the structured content directly.
 
 ---
 
