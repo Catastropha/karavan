@@ -51,7 +51,7 @@ You (Telegram) ←→ Orchestrator Agent
 - Clones all repos into `repos/orchestrator/{repo_name}/` on startup, pulls before each planning session
 - Uses `ClaudeSDKClient` for persistent multi-turn conversation context with the user
 - Has read access to all repos via `add_dirs` on `ClaudeAgentOptions`
-- Creates Trello cards via custom MCP tools (`create_trello_card`, `list_workers`, `get_card_status`, `get_worker_cards`) exposed to the SDK agent through `create_sdk_mcp_server`
+- Creates Trello cards via custom MCP tools (`create_trello_card`, `list_workers`, `get_card_status`, `get_board_cards`) exposed to the SDK agent through `create_sdk_mcp_server`
 - Monitors `done` lists via a single board-level Trello webhook (filters by known `done` list IDs)
 - On card completion: extracts PR link from card comments, checks for newly unblocked dependent cards, sends rich Telegram notification with PR URL
 - Tracks `chat_id` from actual conversations (not just `user_id`) for correct Telegram notifications in both private and group chats
@@ -330,7 +330,7 @@ Advanced example — multiple boards, mixed agent types:
 - Retry logic: on agent failure, comment `[karavan:fail]` on card, retry up to 3x, then move to `failed` list
 - Agent system prompts loaded from config
 - GitHub PR creation via API with card link in PR body
-- Orchestrator MCP tools for card creation (`create_trello_card`, `list_workers`, `get_card_status`, `get_worker_cards`)
+- Orchestrator MCP tools for card creation (`create_trello_card`, `list_workers`, `get_card_status`, `get_board_cards`)
 - Worker change validation (no empty PRs)
 - Card deduplication via in-memory processed set
 - Webhook deduplication on startup (reconcile existing, delete stale)
@@ -346,7 +346,8 @@ Advanced example — multiple boards, mixed agent types:
 - Chat ID tracking from conversations for correct Telegram notifications in groups
 - Configurable agent behaviors via `repo_access`, `output_mode`, and `allowed_tools` config axes
 - Non-coding worker types: reviewers (read+comment), critics (read+comment), improvers (read+update)
-- Unified MCP server factory (`build_mcp_server(name)`) for both orchestrator and workers with `output_mode: "cards"`
+- MCP server factories: `build_mcp_server(name)` for orchestrator/cards-mode workers, `build_worker_mcp_server(name, card_id)` for all other workers (includes `route_card` tool)
+- `route_card` MCP tool: workers can route cards to other workers on the same board (prompt-driven routing replaces config-based `next_stage`)
 - `update_card(card_id, desc=...)` Trello CRUD for agents with `output_mode: "update"`
 - Worker `_execute_card()` decomposed into conditional stages (`_setup_repo`, `_build_prompt`, `_run_sdk`, `_deliver_output`)
 - Multi-board support: `boards:` config groups workers under named boards with per-board `board_id` and `failed_list_id`
@@ -378,7 +379,7 @@ Advanced example — multiple boards, mixed agent types:
 - BaseAgent class: async queue, lifecycle (start/stop), card pickup logic, per-agent status tracking (running, queue depth, last activity, cards processed)
 - WorkerAgent: inherits BaseAgent, uses `query()` (one-shot), delegates to four stage methods (`_setup_repo`, `_build_prompt`, `_run_sdk`, `_deliver_output`) driven by config axes (`repo_access`, `output_mode`, `allowed_tools`). Handles the full card lifecycle (todo → doing → done), retries with counter (max 3), deduplicates via `_processed_cards` set, sends real-time progress to Telegram
 - OrchestratorAgent: inherits BaseAgent, uses `ClaudeSDKClient` (multi-turn) for persistent conversation, connected to Telegram, creates/monitors cards via MCP tools, handles dependency tracking (parses `## Dependencies`, unblocks cards), extracts PR links from comments, tracks `chat_id` from conversations
-- `tools.py`: MCP tool definitions (`create_trello_card`, `list_workers`, `get_card_status`, `get_worker_cards`) exposed via `create_sdk_mcp_server`; single `build_mcp_server(name)` factory used by both orchestrator and workers with `output_mode: "cards"`
+- `tools.py`: MCP tool definitions (`create_trello_card`, `list_workers`, `get_card_status`, `get_board_cards`, `route_card`) exposed via `create_sdk_mcp_server`; `build_mcp_server(name)` for orchestrator/cards-mode, `build_worker_mcp_server(name, card_id)` for all other workers (includes `route_card` with card_id closure); `_routing_decisions` dict + `get_routing_decision()` for cross-module routing state
 - Agent registry: loads agents from config.json, starts them on app lifespan
 
 ### `git_manager` app
@@ -429,8 +430,8 @@ from claude_agent_sdk import query, ClaudeAgentOptions
 # SDK options are built dynamically in _run_sdk() based on config axes:
 # - cwd: set when repo_access == "write"
 # - add_dirs: set when repo_access == "read"
-# - allowed_tools: from config.allowed_tools (+ MCP tool names for "cards" mode)
-# - mcp_servers: added when output_mode == "cards" (via build_mcp_server("karavan_worker"))
+# - allowed_tools: from config.allowed_tools (+ MCP tool names always added)
+# - mcp_servers: always added — cards mode uses build_mcp_server, others use build_worker_mcp_server (includes route_card)
 
 sdk_kwargs = {
     "allowed_tools": config.allowed_tools,  # from config, not hardcoded
@@ -445,6 +446,9 @@ elif config.repo_access == "read":
     sdk_kwargs["add_dirs"] = [str(repo_dir)]
 if config.output_mode == "cards":
     sdk_kwargs["mcp_servers"] = {"karavan": build_mcp_server("karavan_worker")}
+else:
+    sdk_kwargs["mcp_servers"] = {"karavan": build_worker_mcp_server("karavan_worker", card_id)}
+sdk_kwargs["allowed_tools"] = list({*sdk_kwargs["allowed_tools"], *MCP_TOOL_NAMES})
 
 async for message in query(prompt=prompt, options=ClaudeAgentOptions.model_validate(sdk_kwargs)):
     # process messages, collect ResultMessage at end

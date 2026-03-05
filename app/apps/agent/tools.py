@@ -1,7 +1,7 @@
-"""Custom MCP tools exposed to the orchestrator's Claude SDK session.
+"""Custom MCP tools exposed to the orchestrator's and workers' Claude SDK sessions.
 
-These tools let the orchestrator create Trello cards, inspect worker agents,
-and check card status — the actions it needs to actually orchestrate work.
+These tools let agents create Trello cards, inspect worker agents,
+check card status, and route cards to other workers.
 """
 
 import json
@@ -15,6 +15,16 @@ from app.apps.trello.model.input import CardCreateIn
 from app.core.config import BoardConfig, WorkerAgentConfig, settings
 
 logger = logging.getLogger(__name__)
+
+# --- Routing decisions ---
+# Workers store routing decisions here during SDK execution via the route_card tool.
+# After execution, the worker reads and pops the decision to determine card transition.
+_routing_decisions: dict[str, str] = {}
+
+
+def get_routing_decision(card_id: str) -> str | None:
+    """Pop and return the routing decision for a card, or None if no decision was made."""
+    return _routing_decisions.pop(card_id, None)
 
 
 def _text_result(text: str, is_error: bool = False) -> dict:
@@ -31,6 +41,11 @@ def _get_worker(name: str) -> tuple[WorkerAgentConfig, BoardConfig] | None:
         if name in board.workers:
             return board.workers[name], board
     return None
+
+
+def _get_board(name: str) -> BoardConfig | None:
+    """Look up a board config by name."""
+    return settings.boards.get(name)
 
 
 def _worker_not_found(name: str) -> dict:
@@ -62,36 +77,38 @@ def _resolve_worker_from_labels(id_labels: list[str]) -> tuple[str, str] | None:
 
 @tool(
     "list_workers",
-    "List all available worker agents, their label IDs, and board list IDs. "
-    "Use this to find the correct worker name when creating cards.",
+    "List all boards and their worker agents. "
+    "Use this to find the correct board_name when creating cards.",
     {},
 )
 async def list_workers_tool(args: dict) -> dict:
-    """Return all worker agents with their configs and board context."""
-    workers = []
+    """Return all boards with their workers."""
+    boards = []
     for board_name, board in settings.boards.items():
+        workers = []
         for name, config in board.workers.items():
             workers.append({
                 "name": name,
-                "board": board_name,
-                "board_description": board.description or "",
-                "label_id": config.label_id,
-                "next_stage": config.next_stage,
                 "repo": config.repo or "(none)",
                 "repo_access": config.repo_access,
                 "output_mode": config.output_mode,
-                "lists": {"todo": board.lists.todo, "doing": board.lists.doing, "done": board.lists.done},
                 "system_prompt_preview": config.system_prompt[:100] if config.system_prompt else "",
             })
-    if not workers:
-        return _text_result("No worker agents configured.")
-    return _text_result(json.dumps(workers, indent=2))
+        boards.append({
+            "name": board_name,
+            "description": board.description or "",
+            "workers": workers,
+        })
+    if not boards:
+        return _text_result("No boards configured.")
+    return _text_result(json.dumps(boards, indent=2))
 
 
 @tool(
     "create_trello_card",
-    "Create a Trello card for a worker agent. "
-    "The card is placed in the board's todo list with the worker's label. "
+    "Create a Trello card on a board or for a specific worker. "
+    "Provide board_name (card goes to first worker's label) OR worker_name (card goes to that worker's label). "
+    "Exactly one of board_name/worker_name is required. "
     "The card description MUST follow the card schema: "
     "## Task, ## Context, ## Dependencies (optional), ## Acceptance Criteria.",
     {
@@ -105,22 +122,42 @@ async def list_workers_tool(args: dict) -> dict:
                 "type": "string",
                 "description": "Card description in the card schema format with ## Task, ## Context, ## Acceptance Criteria sections",
             },
+            "board_name": {
+                "type": "string",
+                "description": "Name of the board to create the card on (first worker picks it up)",
+            },
             "worker_name": {
                 "type": "string",
-                "description": "Name of the worker agent to assign this card to (use list_workers to find names)",
+                "description": "Name of a specific worker agent to assign this card to",
             },
         },
-        "required": ["name", "description", "worker_name"],
+        "required": ["name", "description"],
     },
 )
 async def create_trello_card_tool(args: dict) -> dict:
-    """Create a Trello card in the board's todo list with the worker's label."""
-    worker_name = args["worker_name"]
-    result = _get_worker(worker_name)
-    if not result:
-        return _worker_not_found(worker_name)
+    """Create a Trello card in a board's todo list with the appropriate label."""
+    board_name = args.get("board_name")
+    worker_name = args.get("worker_name")
 
-    config, board = result
+    if not board_name and not worker_name:
+        return _text_result("Either board_name or worker_name is required.", is_error=True)
+    if board_name and worker_name:
+        return _text_result("Provide board_name or worker_name, not both.", is_error=True)
+
+    if board_name:
+        board = _get_board(board_name)
+        if not board:
+            available = list(settings.boards.keys())
+            return _text_result(f"Board '{board_name}' not found. Available: {available}", is_error=True)
+        first_worker_name = next(iter(board.workers))
+        config = board.workers[first_worker_name]
+        display_target = board_name
+    else:
+        result = _get_worker(worker_name)
+        if not result:
+            return _worker_not_found(worker_name)
+        config, board = result
+        display_target = worker_name
 
     try:
         card_data = {
@@ -135,11 +172,11 @@ async def create_trello_card_tool(args: dict) -> dict:
             "card_id": card.id,
             "card_name": card.name,
             "card_url": card.url,
-            "worker": worker_name,
+            "board": board_name or display_target,
             "list": "todo",
         }, indent=2))
     except Exception as e:
-        logger.exception("Failed to create Trello card for worker %s", worker_name)
+        logger.exception("Failed to create Trello card for %s", display_target)
         return _text_result(f"Failed to create card: {e}", is_error=True)
 
 
@@ -178,52 +215,96 @@ async def get_card_status_tool(args: dict) -> dict:
 
 
 @tool(
-    "get_worker_cards",
-    "List all cards currently assigned to a worker in the board's todo, doing, or done list.",
+    "get_board_cards",
+    "List all cards in a board's todo, doing, or done list.",
     {
         "type": "object",
         "properties": {
-            "worker_name": {"type": "string", "description": "Name of the worker agent"},
+            "board_name": {"type": "string", "description": "Name of the board"},
             "list_type": {"type": "string", "enum": ["todo", "doing", "done"], "description": "Which list to check"},
         },
-        "required": ["worker_name", "list_type"],
+        "required": ["board_name", "list_type"],
     },
 )
-async def get_worker_cards_tool(args: dict) -> dict:
-    """Fetch cards from the board's list, filtered by the worker's label."""
-    worker_name = args["worker_name"]
-    result = _get_worker(worker_name)
-    if not result:
-        return _worker_not_found(worker_name)
-
-    config, board = result
+async def get_board_cards_tool(args: dict) -> dict:
+    """Fetch all cards from a board's list."""
+    board_name = args["board_name"]
+    board = _get_board(board_name)
+    if not board:
+        available = list(settings.boards.keys())
+        return _text_result(f"Board '{board_name}' not found. Available: {available}", is_error=True)
 
     try:
         lists = {"todo": board.lists.todo, "doing": board.lists.doing, "done": board.lists.done}
         list_id = lists[args["list_type"]]
         all_cards = await get_list_cards(list_id)
-        worker_cards = [c for c in all_cards if config.label_id in c.id_labels]
-        cards_out = [{"id": c.id, "name": c.name, "url": c.url} for c in worker_cards]
+        cards_out = [{"id": c.id, "name": c.name, "url": c.url} for c in all_cards]
         return _text_result(json.dumps({
-            "worker": worker_name,
+            "board": board_name,
             "list": args["list_type"],
             "count": len(cards_out),
             "cards": cards_out,
         }, indent=2))
     except Exception as e:
-        logger.exception("Failed to get cards for %s/%s", worker_name, args["list_type"])
+        logger.exception("Failed to get cards for board %s/%s", board_name, args["list_type"])
         return _text_result(f"Failed to get cards: {e}", is_error=True)
 
 
 MCP_TOOL_NAMES: list[str] = [
-    "list_workers", "create_trello_card", "get_card_status", "get_worker_cards",
+    "list_workers", "create_trello_card", "get_card_status", "get_board_cards", "route_card",
 ]
 
 
 def build_mcp_server(name: str = "karavan"):
-    """Create an MCP server with Trello card management tools."""
+    """Create an MCP server with Trello card management tools (orchestrator)."""
     return create_sdk_mcp_server(
         name=name,
         version="0.1.0",
-        tools=[list_workers_tool, create_trello_card_tool, get_card_status_tool, get_worker_cards_tool],
+        tools=[list_workers_tool, create_trello_card_tool, get_card_status_tool, get_board_cards_tool],
+    )
+
+
+def build_worker_mcp_server(name: str, card_id: str):
+    """Create an MCP server for a worker, including route_card with card_id baked in."""
+
+    @tool(
+        "route_card",
+        "Route the current card to another worker on the same board. "
+        "Use this to hand off work — e.g. send a card back to a coder after review, "
+        "or forward to a reviewer after coding. If you don't call this tool, "
+        "the card moves to done (terminal).",
+        {
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "Name of the worker agent to route this card to (use list_workers to find names)",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Brief reason for routing (posted as a comment on the card)",
+                },
+            },
+            "required": ["target", "reason"],
+        },
+    )
+    async def route_card_tool(args: dict) -> dict:
+        """Store a routing decision for the current card."""
+        target = args["target"]
+        reason = args["reason"]
+
+        # Validate target exists
+        result = _get_worker(target)
+        if not result:
+            return _worker_not_found(target)
+
+        _routing_decisions[card_id] = target
+        return _text_result(
+            f"Card will be routed to '{target}' after completion. Reason: {reason}"
+        )
+
+    return create_sdk_mcp_server(
+        name=name,
+        version="0.1.0",
+        tools=[list_workers_tool, create_trello_card_tool, get_card_status_tool, get_board_cards_tool, route_card_tool],
     )
