@@ -1,5 +1,6 @@
 """Karavan — FastAPI application entry point with lifespan management."""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
@@ -93,16 +94,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     set_agent_registry(registry)
 
     await registry.start_all()
-    await _reconcile_trello_webhooks(registry)
-
-    try:
-        await register_telegram_webhook()
-    except Exception:
-        logger.exception("Failed to register Telegram webhook")
 
     logger.info("Karavan started with %d agents", len(registry.agents))
 
+    async def _register_webhooks_after_startup() -> None:
+        """Wait for uvicorn to start serving, then register external webhooks."""
+        await asyncio.sleep(2)
+        await _reconcile_trello_webhooks(registry)
+        try:
+            await register_telegram_webhook()
+        except Exception:
+            logger.exception("Failed to register Telegram webhook")
+
+    webhook_task = asyncio.create_task(_register_webhooks_after_startup())
+
     yield
+
+    webhook_task.cancel()
 
     logger.info("Shutting down Karavan...")
     await registry.stop_all()
