@@ -127,13 +127,6 @@ class OrchestratorAgent(BaseAgent):
         await send_typing_action(msg.chat_id)
 
         try:
-            # Pull latest from all repos before processing
-            for repo_dir in self._repo_dirs:
-                try:
-                    await pull_base(repo_dir, self.config.base_branch)
-                except Exception:
-                    pass
-
             # Query Claude with the user's message
             await self._client.query(msg.text, session_id=self._session_id)
             response_text = ""
