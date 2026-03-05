@@ -66,6 +66,7 @@ You (Telegram) ←→ Orchestrator Agent
 - Sends real-time progress updates to Telegram via edit-in-place messages (tool use summaries every 10s)
 - Moves card to `done`
 - On failure: tracks retry count via `[karavan:fail]` comment prefix, retries up to `MAX_RETRIES=3`, then moves to `failed` list
+- On routing: tracks bounce count via `[karavan:bounce]` comment prefix, kills card to `failed` list when `max_bounces` (per-board, default 3) is reached
 
 ### Configurable Agent Behaviors
 
@@ -86,7 +87,7 @@ Workers are not hardcoded to one lifecycle. Three orthogonal config axes make be
 | `pr` | Validate diff → commit → push → open GitHub PR → comment PR link on card |
 | `comment` | Post agent's text response as a Trello comment on the card |
 | `cards` | Agent creates new Trello cards via MCP tools during execution |
-| `update` | Rewrite the card's description with the agent's text output |
+| `update` | Append agent's section to the card description (delimited by `---` + `### agent_name`) |
 
 **3. `allowed_tools`** — explicit list of SDK tools available to the agent
 
@@ -105,7 +106,7 @@ Workers are not hardcoded to one lifecycle. Three orthogonal config axes make be
 1. `_setup_repo(branch_name)` — conditional on `repo_access`: clone+pull+branch (write), clone+pull (read), or skip (none)
 2. `_build_prompt(card, branch_name)` — dynamic prompt with mode-specific instructions, repo context, and rules
 3. `_run_sdk(card, branch_name, tracker)` — builds `ClaudeAgentOptions` dynamically: `cwd`/`add_dirs`/neither, tools from config, MCP server for `cards` mode
-4. `_deliver_output(card, card_id, branch_name, result_text, cost, tracker)` — dispatches to mode-specific delivery (PR, comment, cards summary, or description update)
+4. `_deliver_output(card, card_id, branch_name, result_text, cost, tracker)` — dispatches to mode-specific delivery (PR, comment, cards summary, or append-only description update)
 
 ### Event Flow
 
@@ -127,8 +128,10 @@ Workers are not hardcoded to one lifecycle. Three orthogonal config axes make be
       - pr: validate diff → commit → push → PR → comment link
       - comment: post analysis as Trello comment
       - cards: post summary (cards created by MCP tools during SDK execution)
-      - update: rewrite card description
-   h. Move card to done
+      - update: append section to card description (delimited by `---` + `### agent_name`)
+   h. _transition_card(): check for route_card decision:
+      - if routing: count bounces → if >= max_bounces, kill to failed list; else post bounce comment and route
+      - if terminal: move to done
    i. On failure: increments retry counter (via comments), retries up to 3x, then moves to failed list
 8. Orchestrator board webhook detects card moved to done → extracts PR link from comments (if any) → checks for unblocked dependent cards → notifies user via Telegram
 ```
@@ -205,18 +208,29 @@ TRELLO_API_SECRET=            # Trello OAuth secret, used for webhook HMAC-SHA1 
 
 ### Topology — `config.json` (safe to commit, no secrets)
 
+Board config fields:
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `board_id` | yes | — | Trello board ID |
+| `description` | no | `""` | Human-readable purpose of this board |
+| `failed_list_id` | yes | — | Trello list ID for failed cards |
+| `max_bounces` | no | `3` | Maximum `route_card` bounces before a card is killed |
+| `lists` | yes | — | Shared `todo`, `doing`, `done` Trello list IDs for all workers on this board |
+
 Worker config fields:
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `lists` | yes | — | `todo`, `doing`, `done` Trello list IDs |
+| `label_id` | yes | — | Trello label ID that routes cards to this worker |
 | `repo` | when `repo_access` is `write` | `""` | Git repo SSH URL |
 | `branch_prefix` | when `repo_access` is `write` | `""` | Branch prefix for this agent |
 | `base_branch` | no | `"main"` | Base branch to pull and target PRs against |
-| `system_prompt` | no | `""` | System prompt for Claude |
+| `system_prompt` | no | `""` | System prompt for Claude (use `@path/to/file.md` to load from file) |
 | `repo_access` | no | `"write"` | `"write"`, `"read"`, or `"none"` |
 | `output_mode` | no | `"pr"` | `"pr"`, `"comment"`, `"cards"`, or `"update"` |
 | `allowed_tools` | no | `["Read","Write","Edit","Bash","Glob","Grep"]` | SDK tools available to the agent |
+| `sdk_timeout` | no | `1800` | Wall-clock timeout in seconds for the SDK query |
 
 Simple example — one board, one coder:
 
@@ -226,9 +240,10 @@ Simple example — one board, one coder:
     "myproject": {
       "board_id": "trello_board_id",
       "failed_list_id": "trello_list_id",
+      "lists": { "todo": "...", "doing": "...", "done": "..." },
       "workers": {
         "api": {
-          "lists": { "todo": "...", "doing": "...", "done": "..." },
+          "label_id": "trello_label_id",
           "repo": "git@github.com:user/myproject-api.git",
           "branch_prefix": "agent/api",
           "base_branch": "main",
@@ -255,52 +270,50 @@ Advanced example — multiple boards, mixed agent types:
     "backend": {
       "board_id": "trello_board_id",
       "failed_list_id": "trello_list_id",
+      "lists": { "todo": "...", "doing": "...", "done": "..." },
       "workers": {
         "api": {
-          "lists": { "todo": "...", "doing": "...", "done": "..." },
+          "label_id": "trello_label_id",
           "repo": "git@github.com:user/myproject-api.git",
           "branch_prefix": "agent/api",
           "base_branch": "main",
           "system_prompt": "You are a FastAPI backend developer."
         },
         "reviewer": {
+          "label_id": "trello_label_id",
           "repo_access": "read",
           "output_mode": "comment",
           "allowed_tools": ["Read", "Glob", "Grep"],
-          "lists": { "todo": "...", "doing": "...", "done": "..." },
           "repo": "git@github.com:user/myproject-api.git",
           "base_branch": "main",
           "system_prompt": "You are a code reviewer. Analyze the code and provide detailed feedback."
         }
       }
     },
-    "frontend": {
+    "research": {
       "board_id": "trello_board_id",
       "failed_list_id": "trello_list_id",
+      "max_bounces": 5,
+      "lists": { "todo": "...", "doing": "...", "done": "..." },
       "workers": {
-        "static": {
-          "lists": { "todo": "...", "doing": "...", "done": "..." },
-          "repo": "git@github.com:user/myproject-static.git",
-          "branch_prefix": "agent/static",
-          "base_branch": "main",
-          "system_prompt": "You are a frontend developer. Use the existing component library."
+        "triage": {
+          "label_id": "trello_label_id",
+          "repo_access": "none",
+          "output_mode": "update",
+          "system_prompt": "You are a triage agent. Classify and enrich incoming ideas."
         },
-        "critic": {
-          "repo_access": "read",
-          "output_mode": "comment",
-          "allowed_tools": ["Read", "Glob", "Grep"],
-          "lists": { "todo": "...", "doing": "...", "done": "..." },
-          "repo": "git@github.com:user/myproject-static.git",
-          "base_branch": "main",
-          "system_prompt": "You are a frontend architecture critic. Evaluate component design, accessibility, performance patterns, and consistency with the design system."
+        "deep": {
+          "label_id": "trello_label_id",
+          "repo_access": "none",
+          "output_mode": "update",
+          "system_prompt": "You are a deep research agent. Expand on triaged ideas with detailed analysis."
         }
       }
     }
   },
   "orchestrator": {
     "repos": [
-      "git@github.com:user/myproject-api.git",
-      "git@github.com:user/myproject-static.git"
+      "git@github.com:user/myproject-api.git"
     ],
     "base_branch": "main",
     "system_prompt": "You are an engineering lead. Break features into clear tasks for worker agents."
@@ -351,6 +364,8 @@ Advanced example — multiple boards, mixed agent types:
 - `update_card(card_id, desc=...)` Trello CRUD for agents with `output_mode: "update"`
 - Worker `_execute_card()` decomposed into conditional stages (`_setup_repo`, `_build_prompt`, `_run_sdk`, `_deliver_output`)
 - Multi-board support: `boards:` config groups workers under named boards with per-board `board_id` and `failed_list_id`
+- Bounce counter: `[karavan:bounce]` comments track routing hops, `max_bounces` per board (default 3) kills runaway cards to `failed` list
+- Append-only card descriptions for `update` output mode: each agent's output is appended with `---` delimiter + `### agent_name` header, preserving prior agents' work
 
 ### v0.3 — Polish
 
@@ -377,7 +392,7 @@ Advanced example — multiple boards, mixed agent types:
 
 ### `agent` app
 - BaseAgent class: async queue, lifecycle (start/stop), card pickup logic, per-agent status tracking (running, queue depth, last activity, cards processed)
-- WorkerAgent: inherits BaseAgent, uses `query()` (one-shot), delegates to four stage methods (`_setup_repo`, `_build_prompt`, `_run_sdk`, `_deliver_output`) driven by config axes (`repo_access`, `output_mode`, `allowed_tools`). Handles the full card lifecycle (todo → doing → done), retries with counter (max 3), deduplicates via `_processed_cards` set, sends real-time progress to Telegram
+- WorkerAgent: inherits BaseAgent, uses `query()` (one-shot), delegates to four stage methods (`_setup_repo`, `_build_prompt`, `_run_sdk`, `_deliver_output`) driven by config axes (`repo_access`, `output_mode`, `allowed_tools`). Handles the full card lifecycle (todo → doing → done/route), retries with counter (max 3), deduplicates via `_processed_cards` set, sends real-time progress to Telegram. Bounce counter (`[karavan:bounce]` comments) kills runaway cards when `max_bounces` is reached. Update mode appends sections with `---` + `### agent_name` delimiters.
 - OrchestratorAgent: inherits BaseAgent, uses `ClaudeSDKClient` (multi-turn) for persistent conversation, connected to Telegram, creates/monitors cards via MCP tools, handles dependency tracking (parses `## Dependencies`, unblocks cards), extracts PR links from comments, tracks `chat_id` from conversations
 - `tools.py`: MCP tool definitions (`create_trello_card`, `list_workers`, `get_card_status`, `get_board_cards`, `route_card`) exposed via `create_sdk_mcp_server`; `build_mcp_server(name)` for orchestrator/cards-mode, `build_worker_mcp_server(name, card_id)` for all other workers (includes `route_card` with card_id closure); `_routing_decisions` dict + `get_routing_decision()` for cross-module routing state
 - Agent registry: loads agents from config.json, starts them on app lifespan

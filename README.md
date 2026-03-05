@@ -37,7 +37,7 @@ Workers aren't limited to writing code. Each worker's behavior is defined by thr
 | `pr` | Commit, push, open GitHub PR | Code changes |
 | `comment` | Post analysis as a Trello card comment | Reviews, feedback |
 | `cards` | Create new Trello cards via MCP tools | Task breakdown, planning |
-| `update` | Rewrite the card's description | Spec refinement |
+| `update` | Append section to card description (`---` + `### agent_name`) | Research pipelines, spec enrichment |
 
 **`allowed_tools`** — what the agent can do during execution
 
@@ -54,7 +54,8 @@ These combine into different agent personas:
 | Coder | `write` | `pr` | Writes code, opens PRs |
 | Reviewer | `read` | `comment` | Reads code, posts analysis |
 | Critic | `read` | `comment` | Evaluates architecture, design, and quality |
-| Improver | `read` | `update` | Refines vague card specs into detailed ones |
+| Improver | `read` | `update` | Reads code, appends enriched analysis to card |
+| Researcher | `none` | `update` | Pure reasoning — each agent appends its section in a pipeline |
 
 All three fields have backward-compatible defaults (`write`, `pr`, full tool list) — existing configs work without changes.
 
@@ -99,9 +100,8 @@ You need tokens from four services:
 ### 3. Set Up the Trello Board
 
 1. Create a new Trello board for your project
-2. For **each worker agent** you want, create three lists: `Todo`, `Doing`, `Done`
-   - Example: `API Todo`, `API Doing`, `API Done` for a backend worker
-3. Create one **Failed** list shared across all agents
+2. Create three shared lists: `Todo`, `Doing`, `Done` — all workers on the board share them
+3. Create one **Failed** list for cards that exhaust retries or bounces
 4. Copy the **board ID** — it's in the board URL: `trello.com/b/AbCdEfGh/my-board` → `AbCdEfGh`
 5. Get all **list IDs** using the API:
    ```bash
@@ -110,12 +110,26 @@ You need tokens from four services:
    This returns each list with its ID:
    ```json
    [
-     { "id": "6830abc123def...", "name": "API Todo" },
-     { "id": "6830abc123def...", "name": "API Doing" },
-     { "id": "6830abc123def...", "name": "API Done" }
+     { "id": "6830abc123def...", "name": "Todo" },
+     { "id": "6830abc123def...", "name": "Doing" },
+     { "id": "6830abc123def...", "name": "Done" },
+     { "id": "6830abc123def...", "name": "Failed" }
    ]
    ```
-   Map these to your `config.json` under each worker's `lists.todo`, `lists.doing`, `lists.done`, and the board's `failed_list_id`.
+   Map these to your `config.json` under the board's `lists.todo`, `lists.doing`, `lists.done`, and `failed_list_id`.
+6. Create one **label** per worker agent — this is how Karavan routes cards to the right worker. Open the board menu → Labels → create a label for each agent (e.g. "api-coder", "reviewer", "triage").
+7. Get all **label IDs** using the API:
+   ```bash
+   curl "https://api.trello.com/1/boards/{board_id}/labels?key={key}&token={token}"
+   ```
+   This returns each label with its ID:
+   ```json
+   [
+     { "id": "69a95cfe17445...", "name": "api-coder", "color": "green" },
+     { "id": "69a95cd3bb6b3...", "name": "reviewer", "color": "blue" }
+   ]
+   ```
+   Map each label ID to the corresponding worker's `label_id` in `config.json`. When the orchestrator creates a card, it assigns the label to route it to the correct worker.
 
 ### 4. Clone and Install
 
@@ -176,13 +190,14 @@ The minimal setup: one Trello board with a single code worker and an orchestrato
     "myproject": {
       "board_id": "6830abc123def456abc12300",
       "failed_list_id": "6830abc123def456abc12304",
+      "lists": {
+        "todo": "6830abc123def456abc12301",
+        "doing": "6830abc123def456abc12302",
+        "done": "6830abc123def456abc12303"
+      },
       "workers": {
         "api": {
-          "lists": {
-            "todo": "6830abc123def456abc12301",
-            "doing": "6830abc123def456abc12302",
-            "done": "6830abc123def456abc12303"
-          },
+          "label_id": "69a95cfe1744507403503d6a",
           "repo": "git@github.com:you/your-api.git",
           "branch_prefix": "agent/api",
           "base_branch": "main",
@@ -201,11 +216,11 @@ The minimal setup: one Trello board with a single code worker and an orchestrato
 }
 ```
 
-Workers are grouped under `boards`. Each board maps to a Trello board and has its own `board_id`, `failed_list_id`, and `workers`. The orchestrator sits at the top level and works across all boards. The worker uses the defaults (`repo_access: "write"`, `output_mode: "pr"`, full tool list), so you don't need to specify them.
+Workers are grouped under `boards`. Each board maps to a Trello board and has its own `board_id`, `failed_list_id`, and shared `lists` (all workers on the board share the same todo/doing/done lists). Each worker has a `label_id` that routes cards to it — the orchestrator assigns the label when creating cards. The orchestrator sits at the top level and works across all boards. The worker uses the defaults (`repo_access: "write"`, `output_mode: "pr"`, full tool list), so you don't need to specify them.
 
 #### Advanced config — multiple boards, mixed agent types
 
-A richer setup across multiple Trello boards with specialized agents: coders, a reviewer, and a critic.
+A richer setup: a coding board with a coder and reviewer, plus a research board where agents route cards between each other (triage → deep analysis) with bounce protection.
 
 ```json
 {
@@ -213,81 +228,71 @@ A richer setup across multiple Trello boards with specialized agents: coders, a 
     "backend": {
       "board_id": "6830abc123def456abc12300",
       "failed_list_id": "6830abc123def456abc12310",
+      "lists": {
+        "todo": "6830abc123def456abc12301",
+        "doing": "6830abc123def456abc12302",
+        "done": "6830abc123def456abc12303"
+      },
       "workers": {
         "api": {
-          "lists": {
-            "todo": "6830abc123def456abc12301",
-            "doing": "6830abc123def456abc12302",
-            "done": "6830abc123def456abc12303"
-          },
+          "label_id": "69a95cfe1744507403503d6a",
           "repo": "git@github.com:you/your-api.git",
           "branch_prefix": "agent/api",
           "base_branch": "main",
           "system_prompt": "You are a FastAPI backend developer. Follow existing patterns in the codebase."
         },
         "reviewer": {
+          "label_id": "69a95cd3bb6b371df787ce5a",
           "repo_access": "read",
           "output_mode": "comment",
           "allowed_tools": ["Read", "Glob", "Grep"],
-          "lists": {
-            "todo": "6830abc123def456abc12304",
-            "doing": "6830abc123def456abc12305",
-            "done": "6830abc123def456abc12306"
-          },
           "repo": "git@github.com:you/your-api.git",
           "base_branch": "main",
-          "system_prompt": "You are a senior code reviewer. Read the codebase, analyze the task, and provide detailed feedback as your response. Focus on correctness, edge cases, and adherence to existing patterns."
+          "system_prompt": "You are a senior code reviewer. Read the codebase, analyze the task, and provide detailed feedback as your response."
         }
       }
     },
-    "frontend": {
+    "research": {
       "board_id": "6830abc123def456abc12311",
       "failed_list_id": "6830abc123def456abc12318",
+      "max_bounces": 5,
+      "lists": {
+        "todo": "6830abc123def456abc12312",
+        "doing": "6830abc123def456abc12313",
+        "done": "6830abc123def456abc12314"
+      },
       "workers": {
-        "static": {
-          "lists": {
-            "todo": "6830abc123def456abc12312",
-            "doing": "6830abc123def456abc12313",
-            "done": "6830abc123def456abc12314"
-          },
-          "repo": "git@github.com:you/your-frontend.git",
-          "branch_prefix": "agent/static",
-          "base_branch": "main",
-          "system_prompt": "You are a frontend developer. Use the existing component library."
+        "triage": {
+          "label_id": "69a9421a0835678209dfd72f",
+          "repo_access": "none",
+          "output_mode": "update",
+          "system_prompt": "You are a triage agent. Classify and enrich incoming ideas."
         },
-        "critic": {
-          "repo_access": "read",
-          "output_mode": "comment",
-          "allowed_tools": ["Read", "Glob", "Grep"],
-          "lists": {
-            "todo": "6830abc123def456abc12315",
-            "doing": "6830abc123def456abc12316",
-            "done": "6830abc123def456abc12317"
-          },
-          "repo": "git@github.com:you/your-frontend.git",
-          "base_branch": "main",
-          "system_prompt": "You are a frontend architecture critic. Evaluate component design, accessibility, performance patterns, and consistency with the design system."
+        "deep": {
+          "label_id": "69a94284e13a6a976d9dea55",
+          "repo_access": "none",
+          "output_mode": "update",
+          "system_prompt": "You are a deep research agent. Expand on triaged ideas with detailed analysis."
         }
       }
     }
   },
   "orchestrator": {
     "repos": [
-      "git@github.com:you/your-api.git",
-      "git@github.com:you/your-frontend.git"
+      "git@github.com:you/your-api.git"
     ],
     "base_branch": "main",
-    "system_prompt": "You are an engineering lead. You have workers across two boards: 'api' writes backend code, 'reviewer' analyzes backend code and posts feedback, 'static' writes frontend code, and 'critic' evaluates frontend architecture. Route work to the right agent."
+    "system_prompt": "You are an engineering lead. Route coding tasks to the backend board and research tasks to the research board."
   }
 }
 ```
 
 In this setup:
 - **backend** board — has a **coder** (`api`) that writes code and opens PRs, and a **reviewer** that reads code and posts analysis as Trello comments
-- **frontend** board — has a **coder** (`static`) working on a separate repo, and a **critic** that evaluates architecture and design patterns
-- **orchestrator** — works across all boards, has read access to all repos, creates cards and routes tasks to the right agent
+- **research** board — has a **triage** agent and a **deep** analysis agent. Both use `output_mode: "update"`, so each agent appends its section to the card description (delimited by `---` + `### agent_name`) — prior agents' work is preserved. Agents can route cards to each other via the `route_card` MCP tool. `max_bounces: 5` prevents runaway routing loops — after 5 bounces the card moves to the failed list.
+- **orchestrator** — works across all boards, creates cards and routes tasks to the right agent
 
-The orchestrator can chain them: assign a feature to the coder, and after the coder finishes, send a review card to the reviewer or a critique card to the critic. Worker names must be unique across all boards.
+Worker names must be unique across all boards.
 
 ### 7. Deploy to a VPS
 

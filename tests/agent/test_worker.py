@@ -304,11 +304,11 @@ class TestBuildPrompt:
         assert "create_trello_card" in prompt
 
     def test_update_mode_prompt(self, update_worker):
-        """Update-mode prompt instructs rewriting the card description."""
+        """Update-mode prompt instructs appending analysis to the card."""
         card = make_card()
         prompt = update_worker._build_prompt(card, "")
-        assert "improved version" in prompt
-        assert "ONLY the updated card description" in prompt
+        assert "APPENDED" in prompt
+        assert "do NOT repeat or rewrite previous sections" in prompt
 
     def test_none_repo_access_no_environment(self, cards_worker):
         """No environment section when repo_access is none."""
@@ -524,13 +524,20 @@ class TestDeliverOutput:
         assert len(call_text) <= 510  # 500 + some slack
 
     async def test_update_mode_updates_description(self, update_worker):
-        """Update mode rewrites the card description."""
+        """Update mode appends to the card description with section delimiter."""
         card = make_card()
-        with patch("app.apps.agent.worker.update_card", new_callable=AsyncMock) as mock_update, \
+        existing_card = make_card()
+        existing_card.desc = "Original description"
+        with patch("app.apps.agent.worker.get_card", new_callable=AsyncMock, return_value=existing_card), \
+             patch("app.apps.agent.worker.update_card", new_callable=AsyncMock) as mock_update, \
              patch("app.apps.agent.worker.add_comment", new_callable=AsyncMock) as mock_comment:
             result = await update_worker._deliver_output(card, "card_id", "", "New description", 0.01, MagicMock())
         assert result is True
-        mock_update.assert_awaited_once_with("card_id", desc="New description")
+        new_desc = mock_update.call_args.kwargs["desc"]
+        assert new_desc.startswith("Original description")
+        assert "\n\n---\n\n" in new_desc
+        assert "### improver" in new_desc
+        assert "New description" in new_desc
         call_text = mock_comment.call_args[0][1]
         assert "Description updated" in call_text
         assert "$0.0100" in call_text
@@ -737,7 +744,9 @@ class TestTransitionCard:
             call_order.append(("remove", label_id))
 
         with patch("app.apps.agent.worker.get_routing_decision", return_value="reviewer"), \
+             patch.object(routing_worker, "_count_bounces", new_callable=AsyncMock, return_value=0), \
              patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
+             patch("app.apps.agent.worker.add_comment", new_callable=AsyncMock), \
              patch("app.apps.agent.worker.add_label", new_callable=AsyncMock, side_effect=track_add), \
              patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock, side_effect=track_remove):
             await routing_worker._transition_card("card_id", "Test task")
@@ -747,7 +756,9 @@ class TestTransitionCard:
     async def test_route_decision_moves_to_todo(self, routing_worker):
         """route_card decision moves card to todo list for the target worker."""
         with patch("app.apps.agent.worker.get_routing_decision", return_value="reviewer"), \
+             patch.object(routing_worker, "_count_bounces", new_callable=AsyncMock, return_value=0), \
              patch("app.apps.agent.worker.update_card", new_callable=AsyncMock) as mock_update, \
+             patch("app.apps.agent.worker.add_comment", new_callable=AsyncMock), \
              patch("app.apps.agent.worker.add_label", new_callable=AsyncMock), \
              patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock):
             await routing_worker._transition_card("card_id", "Test task")
@@ -770,6 +781,7 @@ class TestTransitionCard:
     async def test_route_add_label_failure_keeps_own_label(self, routing_worker):
         """If adding target label fails, own label stays — card is not orphaned."""
         with patch("app.apps.agent.worker.get_routing_decision", return_value="reviewer"), \
+             patch.object(routing_worker, "_count_bounces", new_callable=AsyncMock, return_value=0), \
              patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
              patch("app.apps.agent.worker.add_label", new_callable=AsyncMock, side_effect=RuntimeError("API error")), \
              patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock) as mock_remove, \
@@ -782,8 +794,10 @@ class TestTransitionCard:
     async def test_route_remove_label_failure_is_harmless(self, routing_worker):
         """If removing own label fails after target label added, card has two labels — harmless."""
         with patch("app.apps.agent.worker.get_routing_decision", return_value="reviewer"), \
+             patch.object(routing_worker, "_count_bounces", new_callable=AsyncMock, return_value=0), \
              patch("app.apps.agent.worker.update_card", new_callable=AsyncMock), \
              patch("app.apps.agent.worker.add_label", new_callable=AsyncMock), \
+             patch("app.apps.agent.worker.add_comment", new_callable=AsyncMock), \
              patch("app.apps.agent.worker.remove_label", new_callable=AsyncMock, side_effect=RuntimeError("API error")):
             await routing_worker._transition_card("card_id", "Test task")  # Should not raise
 

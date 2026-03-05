@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 FAIL_PREFIX = "[karavan:fail]"
+BOUNCE_PREFIX = "[karavan:bounce]"
+SECTION_DELIMITER = "\n\n---\n\n"
 
 
 def _parse_repo_url(repo_url: str) -> tuple[str, str]:
@@ -143,6 +145,17 @@ class WorkerAgent(BaseAgent):
                 count += 1
         return count
 
+    async def _count_bounces(self, card_id: str) -> int:
+        """Count bounce comments on a card by looking for the bounce prefix."""
+        actions = await get_card_actions(card_id)
+        count = 0
+        for action in actions:
+            data = action.get("data", {})
+            text = data.get("text", "")
+            if text.startswith(BOUNCE_PREFIX):
+                count += 1
+        return count
+
     # --- Stage methods ---
 
     async def _setup_repo(self, branch_name: str) -> None:
@@ -173,8 +186,8 @@ class WorkerAgent(BaseAgent):
             )
         elif mode == "update":
             parts.append(
-                "You are a worker agent in the Karavan system. Your job is to **produce an improved version of the card description** below.\n\n"
-                "Output ONLY the updated card description in markdown. Do not include any preamble or explanation — just the new description content.\n"
+                "You are a worker agent in the Karavan system. Your job is to **analyze the task and produce your section of the card**.\n\n"
+                "Your output will be APPENDED to the card — do NOT repeat or rewrite previous sections.\n"
             )
 
         # Repo context (when applicable)
@@ -207,8 +220,8 @@ class WorkerAgent(BaseAgent):
             parts.append("- **DO** set dependencies between cards when order matters.")
             parts.append("- **DO NOT** modify any files — use only the MCP tools to create cards.")
         elif mode == "update":
-            parts.append("- **DO** preserve the card schema structure (## Task, ## Context, etc.).")
-            parts.append("- **DO** make the description clearer, more detailed, and more actionable.")
+            parts.append("- **DO** read the full card to understand prior agents' work.")
+            parts.append("- **DO** produce only YOUR section — do not repeat or rewrite previous sections.")
             parts.append("- **DO NOT** modify any files — your text output IS the deliverable.")
         parts.append("")
 
@@ -226,7 +239,7 @@ class WorkerAgent(BaseAgent):
         elif mode == "cards":
             parts.append("When you are done creating cards, briefly summarize what cards you created and why.")
         elif mode == "update":
-            parts.append("Output the complete updated card description now.")
+            parts.append("Output your analysis section now. It will be appended under a delimiter.")
 
         return "\n".join(parts)
 
@@ -307,9 +320,12 @@ class WorkerAgent(BaseAgent):
             return True
         elif mode == "update":
             if result_text:
-                await update_card(card_id, desc=result_text)
+                current_card = await get_card(card_id)
+                section_header = f"### {self.name}"
+                new_desc = (current_card.desc or "") + SECTION_DELIMITER + section_header + "\n\n" + result_text
+                await update_card(card_id, desc=new_desc)
             if cost is not None:
-                await add_comment(card_id, f"Description updated. Cost: ${cost:.4f}")
+                await add_comment(card_id, f"Description updated by {self.name}. Cost: ${cost:.4f}")
             return True
         else:
             raise ValueError(f"Unknown output_mode: {mode}")
@@ -430,6 +446,22 @@ class WorkerAgent(BaseAgent):
                     target_name = None
 
             if target_name:
+                # Check bounce count before routing
+                bounce_count = await self._count_bounces(card_id)
+                if bounce_count >= self.board.max_bounces:
+                    await add_comment(
+                        card_id,
+                        f"{BOUNCE_PREFIX} Max bounces reached ({bounce_count}/{self.board.max_bounces}). "
+                        f"Card killed by {self.name} instead of routing to '{target_name}'.",
+                    )
+                    await update_card(card_id, id_list=self.board.failed_list_id)
+                    logger.warning(
+                        "Worker %s: card '%s' moved to Failed after %d bounces",
+                        self.name, card_name, bounce_count,
+                    )
+                    return
+
+                await add_comment(card_id, f"{BOUNCE_PREFIX} {self.name} → {target_name}")
                 next_worker = self.board.workers[target_name]
                 await update_card(card_id, id_list=self.board.lists.todo)
                 # Add next label BEFORE removing ours — card briefly has two

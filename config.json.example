@@ -1,92 +1,81 @@
 {
   "boards": {
-    "backend": {
-      "board_id": "trello_board_id",
-      "description": "Backend API services — FastAPI endpoints, database models, business logic",
-      "failed_list_id": "trello_list_id",
-      "lists": {
-        "todo": "trello_list_id",
-        "doing": "trello_list_id",
-        "done": "trello_list_id"
-      },
+    "api-bot": {
+      "board_id": "",
+      "description": "API development board. It's build with FastAPI.",
+      "failed_list_id": "",
+      "lists": { "todo": "", "doing": "", "done": "" },
       "workers": {
-        "api": {
-          "label_id": "trello_label_id",
-          "repo": "git@github.com:user/myproject-api.git",
-          "branch_prefix": "agent/api",
-          "base_branch": "main",
-          "system_prompt": "@prompts/api.md"
-        },
-        "reviewer": {
-          "label_id": "trello_label_id",
-          "repo_access": "read",
-          "output_mode": "comment",
-          "allowed_tools": ["Read", "Glob", "Grep"],
-          "repo": "git@github.com:user/myproject-api.git",
-          "base_branch": "main",
-          "system_prompt": "@prompts/reviewer.md"
+        "api-coder": {
+          "label_id": "",
+          "repo": "",
+          "branch_prefix": "api-coder",
+          "base_branch": "dev",
+          "system_prompt": "You are a FastAPI backend developer. Follow CLAUDE.md coding conventions and existing patterns in the codebase."
         }
       }
     },
-    "frontend": {
-      "board_id": "trello_board_id",
-      "description": "Frontend UI — React components, pages, styling, client-side logic",
-      "failed_list_id": "trello_list_id",
-      "lists": {
-        "todo": "trello_list_id",
-        "doing": "trello_list_id",
-        "done": "trello_list_id"
-      },
+    "static-bot": {
+      "board_id": "",
+      "description": "Static site development board. It's build with React. Needs to be converted to a static site using Vite.",
+      "failed_list_id": "",
+      "lists": { "todo": "", "doing": "", "done": "" },
       "workers": {
-        "static": {
-          "label_id": "trello_label_id",
-          "repo": "git@github.com:user/myproject-static.git",
-          "branch_prefix": "agent/static",
-          "base_branch": "main",
-          "system_prompt": "@prompts/static.md"
-        },
-        "critic": {
-          "label_id": "trello_label_id",
-          "repo_access": "read",
-          "output_mode": "comment",
-          "allowed_tools": ["Read", "Glob", "Grep"],
-          "repo": "git@github.com:user/myproject-static.git",
-          "base_branch": "main",
-          "system_prompt": "@prompts/critic.md"
+        "static-coder": {
+          "label_id": "",
+          "repo": "",
+          "branch_prefix": "static-coder",
+          "base_branch": "dev",
+          "system_prompt": "You are a frontend developer. Follow CLAUDE.md coding conventions."
         }
       }
     },
     "research": {
-      "board_id": "trello_board_id",
-      "description": "Research pipeline — gather, critique, synthesize",
-      "failed_list_id": "trello_list_id",
-      "lists": {
-        "todo": "trello_list_id",
-        "doing": "trello_list_id",
-        "done": "trello_list_id"
-      },
+      "board_id": "",
+      "description": "Research board for ideation and brainstorming. It's the 100x factory.",
+      "failed_list_id": "",
+      "max_bounces": 10,
+      "lists": { "todo": "", "doing": "", "done": "" },
       "workers": {
-        "researcher": {
-          "label_id": "trello_label_id",
+        "triage": {
+          "label_id": "",
           "repo_access": "none",
           "output_mode": "update",
-          "system_prompt": "You are a research agent. Gather and analyze information. When done, call route_card(target='research_critic', reason='Ready for critique') to send to the critic."
+          "system_prompt": "@prompts/triage.md"
         },
-        "research_critic": {
-          "label_id": "trello_label_id",
+        "deep": {
+          "label_id": "",
           "repo_access": "none",
           "output_mode": "update",
-          "system_prompt": "You are a critic. Evaluate and refine research output."
+          "system_prompt": "@prompts/deep.md"
+        },
+        "factory": {
+          "label_id": "",
+          "repo_access": "none",
+          "output_mode": "update",
+          "system_prompt": "@prompts/factory.md"
+        },
+        "validation": {
+          "label_id": "",
+          "repo_access": "none",
+          "output_mode": "update",
+          "system_prompt": "@prompts/validation.md"
+        },
+        "verdict": {
+          "label_id": "",
+          "repo_access": "none",
+          "output_mode": "update",
+          "system_prompt": "@prompts/verdict.md"
         }
       }
     }
   },
   "orchestrator": {
     "repos": [
-      "git@github.com:user/myproject-api.git",
-      "git@github.com:user/myproject-static.git"
+      "",
+      ""
     ],
-    "base_branch": "main",
+    "base_branch": "dev",
     "system_prompt": "@prompts/orchestrator.md"
   }
 }

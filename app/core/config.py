@@ -80,6 +80,7 @@ class BoardConfig(BaseModel):
     board_id: Annotated[str, Field(min_length=1, description="Trello board ID")]
     description: Annotated[str, Field(default="", description="Human-readable purpose of this board, shown to orchestrator and agents")]
     failed_list_id: Annotated[str, Field(min_length=1, description="Trello list ID for failed cards")]
+    max_bounces: Annotated[int, Field(default=3, ge=1, description="Maximum route_card bounces before a card is killed")]
     lists: Annotated[WorkerListsConfig, Field(description="Shared Trello list IDs (todo/doing/done)")]
     workers: Annotated[dict[str, WorkerAgentConfig], Field(default_factory=dict, description="Worker agents on this board")]
 
