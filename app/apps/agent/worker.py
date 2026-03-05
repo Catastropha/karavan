@@ -272,7 +272,7 @@ class WorkerAgent(BaseAgent):
             },
             "permission_mode": "bypassPermissions",
             "setting_sources": ["project"],
-            "max_turns": 50,
+            "max_turns": self.config.max_turns,
         }
         if settings.model:
             sdk_kwargs["model"] = settings.model

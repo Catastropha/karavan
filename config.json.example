@@ -42,30 +42,35 @@
           "label_id": "",
           "repo_access": "none",
           "output_mode": "update",
+          "max_turns": 20,
           "system_prompt": "@prompts/triage.md"
         },
         "deep": {
           "label_id": "",
           "repo_access": "none",
           "output_mode": "update",
+          "max_turns": 20,
           "system_prompt": "@prompts/deep.md"
         },
         "factory": {
           "label_id": "",
           "repo_access": "none",
           "output_mode": "update",
+          "max_turns": 20,
           "system_prompt": "@prompts/factory.md"
         },
         "validation": {
           "label_id": "",
           "repo_access": "none",
           "output_mode": "update",
+          "max_turns": 20,
           "system_prompt": "@prompts/validation.md"
         },
         "verdict": {
           "label_id": "",
           "repo_access": "none",
           "output_mode": "update",
+          "max_turns": 20,
           "system_prompt": "@prompts/verdict.md"
         }
       }

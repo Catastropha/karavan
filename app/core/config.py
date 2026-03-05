@@ -59,6 +59,10 @@ class WorkerAgentConfig(BaseModel):
         int,
         Field(default=1800, ge=60, description="Wall-clock timeout in seconds for the SDK query (default: 1800 = 30 min)"),
     ]
+    max_turns: Annotated[
+        int,
+        Field(default=50, ge=1, description="Maximum turns for the SDK query (default: 50)"),
+    ]
 
     @model_validator(mode="after")
     def _validate_config_axes(self) -> "WorkerAgentConfig":
