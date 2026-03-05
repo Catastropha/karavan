@@ -73,7 +73,7 @@ class OrchestratorAgent(BaseAgent):
             "permission_mode": "bypassPermissions",
             "setting_sources": ["project"],
         }
-        self._client = ClaudeSDKClient(options=ClaudeAgentOptions.model_validate(sdk_data))
+        self._client = ClaudeSDKClient(options=ClaudeAgentOptions(**sdk_data))
         await self._client.__aenter__()
         logger.info("Orchestrator %s: Claude SDK client started with %d repos", self.name, len(self._repo_dirs))
 

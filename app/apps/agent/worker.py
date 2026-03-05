@@ -277,7 +277,7 @@ class WorkerAgent(BaseAgent):
             text = ""
             cost: float | None = None
             usage: dict | None = None
-            async for message in query(prompt=prompt, options=ClaudeAgentOptions.model_validate(sdk_kwargs)):
+            async for message in query(prompt=prompt, options=ClaudeAgentOptions(**sdk_kwargs)):
                 tracker.record_activity(message)
                 if hasattr(message, "total_cost_usd"):
                     cost = message.total_cost_usd
