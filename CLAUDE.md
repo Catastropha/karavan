@@ -61,7 +61,7 @@ You (Telegram) ←→ Orchestrator Agent
 - Watches its own `todo` list via a list-level Trello webhook
 - Deduplicates cards via an in-memory `_processed_cards` set — skips cards already being worked on
 - Picks up a card → moves to `doing`
-- Uses `query()` (one-shot, stateless) with a rich prompt template built from the card description and config axes
+- Uses `query()` (one-shot, stateless) with a rich prompt template built from the card description, card comments, and config axes
 - Behavior is composable via three orthogonal config axes (see **Configurable Agent Behaviors** below)
 - Sends real-time progress updates to Telegram via edit-in-place messages (tool use summaries every 10s)
 - Moves card to `done`
@@ -87,7 +87,7 @@ Workers are not hardcoded to one lifecycle. Three orthogonal config axes make be
 | `pr` | Validate diff → commit → push → open GitHub PR → comment PR link on card |
 | `comment` | Post agent's text response as a Trello comment on the card |
 | `cards` | Agent creates new Trello cards via MCP tools during execution |
-| `update` | Post agent's output as a `[karavan:output:agent_name]` comment on the card (prior outputs included in prompt) |
+| `update` | Post agent's output as a `[karavan:output:agent_name]` comment on the card (prior agent comments included in prompt) |
 
 **3. `allowed_tools`** — explicit list of SDK tools available to the agent
 
@@ -128,7 +128,7 @@ Workers are not hardcoded to one lifecycle. Three orthogonal config axes make be
       - pr: validate diff → commit → push → PR → comment link
       - comment: post analysis as Trello comment
       - cards: post summary (cards created by MCP tools during SDK execution)
-      - update: post `[karavan:output:agent_name]` comment (chunked if >16K chars)
+      - update: post `[karavan:output:agent_name]` comment on the card (chunked if >16K chars)
    h. _transition_card(): check for route_card decision:
       - if routing: count bounces → if >= max_bounces, kill to failed list; else post bounce comment and route
       - if terminal: move to done
@@ -160,13 +160,13 @@ Orchestrator holds dependent cards until the dependency clears. No complex DAG �
 - No database — Trello is the state store
 - No message queue — Trello is the queue
 - No web UI — Trello is the UI
-- No agent memory between tasks — each card is stateless, context is in the card description + repo
+- No agent memory between tasks — each card is stateless, context is in the card description, comments, and repo
 
 ---
 
 ## Card Schema (The Protocol)
 
-A Trello card IS the task contract between agents. Workers must parse this format from the card description:
+A Trello card IS the task contract between agents. The card description defines the task; agent outputs are posted as comments. Workers must parse this format from the card description:
 
 ```markdown
 ## Task
@@ -372,7 +372,7 @@ Advanced example — multiple boards, mixed agent types:
 - Worker `_execute_card()` decomposed into conditional stages (`_setup_repo`, `_build_prompt`, `_run_sdk`, `_deliver_output`)
 - Multi-board support: `boards:` config groups workers under named boards with per-board `board_id` and `failed_list_id`
 - Bounce counter: `[karavan:bounce]` comments track routing hops, `max_bounces` per board (default 3) kills runaway cards to `failed` list
-- Comment-based agent output for `update` mode: `[karavan:output:agent_name]` comments instead of card description (avoids 16K desc limit, supports chunking)
+- Comment-based agent output for `update` mode: `[karavan:output:agent_name]` comments on the card (avoids 16K desc limit, supports chunking)
 
 ### v0.3 — Polish
 
@@ -394,12 +394,12 @@ Advanced example — multiple boards, mixed agent types:
 ### `trello` app
 - Trello domain models (card schemas, webhook payloads) and Trello-specific CRUD operations
 - The raw httpx client for Trello lives in `core/resource.py` as a shared singleton (infrastructure, not domain)
-- CRUD wraps the shared client with domain methods: get_card, get_list_cards, create_card, update_card (moves card and/or updates description), add_comment, register_webhook, delete_webhook
+- CRUD wraps the shared client with domain methods: get_card, get_list_cards, create_card, update_card (moves card), add_comment, register_webhook, delete_webhook
 - Webhook payload parsing and validation via Pydantic models
 
 ### `agent` app
 - BaseAgent class: async queue, lifecycle (start/stop), card pickup logic, per-agent status tracking (running, queue depth, last activity, cards processed)
-- WorkerAgent: inherits BaseAgent, uses `query()` (one-shot), delegates to four stage methods (`_setup_repo`, `_build_prompt`, `_run_sdk`, `_deliver_output`) driven by config axes (`repo_access`, `output_mode`, `allowed_tools`). Handles the full card lifecycle (todo → doing → done/route), retries with counter (max 3), deduplicates via `_processed_cards` set, sends real-time progress to Telegram. Bounce counter (`[karavan:bounce]` comments) kills runaway cards when `max_bounces` is reached. Update mode posts `[karavan:output:agent_name]` comments (chunked if >16K); `_build_prompt` fetches prior output comments to include in the prompt.
+- WorkerAgent: inherits BaseAgent, uses `query()` (one-shot), delegates to four stage methods (`_setup_repo`, `_build_prompt`, `_run_sdk`, `_deliver_output`) driven by config axes (`repo_access`, `output_mode`, `allowed_tools`). Handles the full card lifecycle (todo → doing → done/route), retries with counter (max 3), deduplicates via `_processed_cards` set, sends real-time progress to Telegram. Bounce counter (`[karavan:bounce]` comments) kills runaway cards when `max_bounces` is reached. All agent output is posted as comments on the card — `update` mode uses `[karavan:output:agent_name]` tagged comments (chunked if >16K); `_build_prompt` fetches prior agent comments to include in the prompt.
 - OrchestratorAgent: inherits BaseAgent, uses `ClaudeSDKClient` (multi-turn) for persistent conversation, connected to Telegram, creates/monitors cards via MCP tools, handles dependency tracking (parses `## Dependencies`, unblocks cards), extracts PR links from comments, tracks `chat_id` from conversations
 - `tools.py`: MCP tool definitions (`create_trello_card`, `list_workers`, `get_card_status`, `get_board_cards`, `route_card`) exposed via `create_sdk_mcp_server`; `build_mcp_server(name)` for orchestrator/cards-mode, `build_worker_mcp_server(name, card_id)` for all other workers (includes `route_card` with card_id closure); `_routing_decisions` dict + `get_routing_decision()` for cross-module routing state
 - Agent registry: loads agents from config.json, starts them on app lifespan

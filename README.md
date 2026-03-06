@@ -26,7 +26,7 @@ Three config axes define what each worker does:
 | Axis                | Options                               | Controls                                                                 |
 |---------------------|---------------------------------------|--------------------------------------------------------------------------|
 | **`repo_access`**   | `write` · `read` · `none`             | Whether the agent clones a repo, and if it can push changes              |
-| **`output_mode`**   | `pr` · `comment` · `cards` · `update` | What the agent produces — a PR, analysis, new tasks, or enriched content |
+| **`output_mode`**   | `pr` · `comment` · `cards` · `update` | What the agent produces — a PR, a comment, new tasks, or a tagged comment for pipelines |
 | **`allowed_tools`** | Any subset of SDK tools               | What the agent can do during execution                                   |
 
 Mix and match to create any agent type:
@@ -38,7 +38,7 @@ Mix and match to create any agent type:
 | Tester     | `write`      | `pr`         | Writes tests, pushes to the same branch                 |
 | Reviewer   | `read`       | `update`     | Reads code, posts analysis on the card                  |
 | Planner    | `none`       | `cards`      | Breaks work into sub-tasks as new Trello cards          |
-| Researcher | `none`       | `update`     | Enriches cards with analysis — chains with other agents |
+| Researcher | `none`       | `update`     | Posts analysis as a comment — chains with other agents |
 
 ### Work Across Multiple Boards
 
