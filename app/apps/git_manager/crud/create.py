@@ -45,6 +45,23 @@ async def clone_repo(repo_url: str, target_dir: str | Path) -> None:
 
 
 async def create_branch(repo_dir: str | Path, branch_name: str) -> None:
-    """Create and checkout a branch, resetting it to HEAD if it already exists."""
-    await _run_git(["git", "checkout", "-B", branch_name], cwd=repo_dir)
-    logger.info("Created branch %s in %s", branch_name, repo_dir)
+    """Create and checkout a branch.
+
+    If the branch already exists on the remote (e.g. a prior pipeline stage
+    pushed to it), fetch and check it out so work continues on the same branch.
+    Otherwise create a fresh branch from current HEAD.
+    """
+    _, ls_output = await _run_git(
+        ["git", "ls-remote", "--heads", "origin", branch_name],
+        cwd=repo_dir,
+    )
+    if ls_output.strip():
+        await _run_git(["git", "fetch", "origin", branch_name], cwd=repo_dir)
+        await _run_git(
+            ["git", "checkout", "-B", branch_name, f"origin/{branch_name}"],
+            cwd=repo_dir,
+        )
+        logger.info("Checked out existing remote branch %s in %s", branch_name, repo_dir)
+    else:
+        await _run_git(["git", "checkout", "-b", branch_name], cwd=repo_dir)
+        logger.info("Created new branch %s in %s", branch_name, repo_dir)
