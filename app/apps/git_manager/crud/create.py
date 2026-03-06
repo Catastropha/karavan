@@ -63,5 +63,5 @@ async def create_branch(repo_dir: str | Path, branch_name: str) -> None:
         )
         logger.info("Checked out existing remote branch %s in %s", branch_name, repo_dir)
     else:
-        await _run_git(["git", "checkout", "-b", branch_name], cwd=repo_dir)
+        await _run_git(["git", "checkout", "-B", branch_name], cwd=repo_dir)
         logger.info("Created new branch %s in %s", branch_name, repo_dir)
