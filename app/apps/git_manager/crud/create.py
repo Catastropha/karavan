@@ -9,7 +9,14 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_GIT_ENV = {**os.environ, "GIT_SSH_COMMAND": f"ssh -i {settings.git_ssh_key_path} -o StrictHostKeyChecking=no"}
+_GIT_ENV = {
+    **os.environ,
+    "GIT_SSH_COMMAND": f"ssh -i {settings.git_ssh_key_path} -o StrictHostKeyChecking=no",
+    "GIT_AUTHOR_NAME": "karavan",
+    "GIT_AUTHOR_EMAIL": "karavan@bot",
+    "GIT_COMMITTER_NAME": "karavan",
+    "GIT_COMMITTER_EMAIL": "karavan@bot",
+}
 
 
 async def _run_git(cmd: list[str], cwd: str | Path | None = None, *, check: bool = True) -> tuple[int, str]:
