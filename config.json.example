@@ -3,16 +3,58 @@
   "boards": {
     "api-bot": {
       "board_id": "",
-      "description": "API development board. It's build with FastAPI.",
+      "description": "API development board. FastAPI backend. Pipeline: scout → coder → tester → elegance → reviewer.",
       "failed_list_id": "",
+      "max_bounces": 20,
       "lists": { "todo": "", "doing": "", "done": "" },
       "workers": {
+        "api-scout": {
+          "label_id": "",
+          "repo": "git@github.com:yourgit",
+          "base_branch": "dev",
+          "repo_access": "read",
+          "output_mode": "update",
+          "allowed_tools": ["Read", "Glob", "Grep", "Bash"],
+          "system_prompt": "@prompts/api-bot/api-scout.md",
+          "sdk_timeout": 600,
+          "max_turns": 20
+        },
         "api-coder": {
           "label_id": "",
-          "repo": "",
-          "branch_prefix": "api-coder",
+          "repo": "git@github.com:yourgit",
+          "branch_prefix": "agent/api",
           "base_branch": "dev",
-          "system_prompt": "You are a FastAPI backend developer. Follow CLAUDE.md coding conventions and existing patterns in the codebase."
+          "system_prompt": "@prompts/api-bot/api-coder.md"
+        },
+        "api-tester": {
+          "label_id": "",
+          "repo": "git@github.com:yourgit",
+          "branch_prefix": "agent/api",
+          "base_branch": "dev",
+          "output_mode": "pr",
+          "system_prompt": "@prompts/api-bot/api-tester.md",
+          "sdk_timeout": 1200
+        },
+        "api-elegance": {
+          "label_id": "",
+          "repo": "git@github.com:yourgit",
+          "branch_prefix": "agent/api",
+          "base_branch": "dev",
+          "output_mode": "pr",
+          "system_prompt": "@prompts/api-bot/api-elegance.md",
+          "sdk_timeout": 900,
+          "max_turns": 30
+        },
+        "api-reviewer": {
+          "label_id": "",
+          "repo": "git@github.com:yourgit",
+          "base_branch": "dev",
+          "repo_access": "read",
+          "output_mode": "update",
+          "allowed_tools": ["Read", "Glob", "Grep", "Bash", "WebFetch"],
+          "system_prompt": "@prompts/api-bot/api-reviewer.md",
+          "sdk_timeout": 900,
+          "max_turns": 20
         }
       }
     },
@@ -24,7 +66,7 @@
       "workers": {
         "static-coder": {
           "label_id": "",
-          "repo": "",
+          "repo": "git@github.com:yourgit",
           "branch_prefix": "static-coder",
           "base_branch": "dev",
           "system_prompt": "You are a frontend developer. Follow CLAUDE.md coding conventions."
@@ -42,44 +84,49 @@
           "label_id": "",
           "repo_access": "none",
           "output_mode": "update",
-          "max_turns": 20,
-          "system_prompt": "@prompts/triage.md"
+          "system_prompt": "@prompts/research/triage.md",
+          "sdk_timeout": 900,
+          "max_turns": 10
         },
         "deep": {
           "label_id": "",
           "repo_access": "none",
           "output_mode": "update",
-          "max_turns": 20,
-          "system_prompt": "@prompts/deep.md"
+          "system_prompt": "@prompts/research/deep.md",
+          "sdk_timeout": 900,
+          "max_turns": 10
         },
         "factory": {
           "label_id": "",
           "repo_access": "none",
           "output_mode": "update",
-          "max_turns": 20,
-          "system_prompt": "@prompts/factory.md"
+          "system_prompt": "@prompts/research/factory.md",
+          "sdk_timeout": 900,
+          "max_turns": 10
         },
         "validation": {
           "label_id": "",
           "repo_access": "none",
           "output_mode": "update",
-          "max_turns": 20,
-          "system_prompt": "@prompts/validation.md"
+          "system_prompt": "@prompts/research/validation.md",
+          "sdk_timeout": 900,
+          "max_turns": 10
         },
         "verdict": {
           "label_id": "",
           "repo_access": "none",
           "output_mode": "update",
-          "max_turns": 20,
-          "system_prompt": "@prompts/verdict.md"
+          "system_prompt": "@prompts/research/verdict.md",
+          "sdk_timeout": 900,
+          "max_turns": 10
         }
       }
     }
   },
   "orchestrator": {
     "repos": [
-      "",
-      ""
+      "git@github.com:yourgit",
+      "git@github.com:yourgit"
     ],
     "base_branch": "dev",
     "system_prompt": "@prompts/orchestrator.md"
