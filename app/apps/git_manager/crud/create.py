@@ -51,6 +51,30 @@ async def clone_repo(repo_url: str, target_dir: str | Path) -> None:
     logger.info("Cloned %s to %s", repo_url, target)
 
 
+async def fetch_pr_branch(repo_dir: str | Path, card_id_short: str) -> str | None:
+    """Fetch a remote PR branch matching a card ID suffix.
+
+    Searches for branches matching ``*/card-{card_id_short}`` on the remote.
+    Returns the branch name if found and checked out, else None.
+    """
+    _, ls_output = await _run_git(
+        ["git", "ls-remote", "--heads", "origin", f"*card-{card_id_short}"],
+        cwd=repo_dir,
+    )
+    if not ls_output.strip():
+        return None
+
+    # Take the first matching ref: "sha\trefs/heads/agent/api/card-abc123"
+    first_line = ls_output.strip().splitlines()[0]
+    ref = first_line.split("\t")[-1]
+    branch = ref.removeprefix("refs/heads/")
+
+    await _run_git(["git", "fetch", "origin", branch], cwd=repo_dir)
+    await _run_git(["git", "checkout", "-B", branch, f"origin/{branch}"], cwd=repo_dir)
+    logger.info("Checked out PR branch %s in %s", branch, repo_dir)
+    return branch
+
+
 async def create_branch(repo_dir: str | Path, branch_name: str) -> None:
     """Create and checkout a branch.
 

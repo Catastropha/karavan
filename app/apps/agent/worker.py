@@ -10,7 +10,7 @@ from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, TextBlock, qu
 
 from app.apps.agent.base import BaseAgent
 from app.apps.agent.tools import MCP_TOOL_NAMES, build_mcp_server, build_worker_mcp_server, get_routing_decision
-from app.apps.git_manager.crud.create import clone_repo, create_branch
+from app.apps.git_manager.crud.create import clone_repo, create_branch, fetch_pr_branch
 from app.apps.git_manager.crud.update import commit_and_push, create_pr, pull_base
 from app.apps.git_manager.model.input import PRCreateIn
 from app.apps.trello.crud.read import get_card, get_card_actions, get_list_cards
@@ -167,7 +167,7 @@ class WorkerAgent(BaseAgent):
 
     # --- Stage methods ---
 
-    async def _setup_repo(self, branch_name: str) -> None:
+    async def _setup_repo(self, branch_name: str, card_id: str = "") -> None:
         """Clone/pull repo and optionally create a branch based on repo_access."""
         if self.config.repo_access == "none":
             return
@@ -177,6 +177,10 @@ class WorkerAgent(BaseAgent):
 
         if self.config.repo_access == "write":
             await create_branch(self.repo_dir, branch_name)
+        elif self.config.repo_access == "read" and card_id:
+            pr_branch = await fetch_pr_branch(self.repo_dir, card_id[-6:])
+            if pr_branch:
+                logger.info("Worker %s: checked out PR branch %s for review", self.name, pr_branch)
 
     async def _get_output_comments(self, card_id: str) -> list[tuple[str, str]]:
         """Fetch agent output comments from a card, in chronological order.
@@ -515,7 +519,7 @@ class WorkerAgent(BaseAgent):
             await tracker.start()
 
             # 2. Setup repo (conditional on repo_access)
-            await self._setup_repo(branch_name)
+            await self._setup_repo(branch_name, card_id)
 
             # 3. Run Claude Agent SDK
             result_text, execution_cost, execution_usage = await self._run_sdk(card, card_id, branch_name, tracker)
