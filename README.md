@@ -62,7 +62,7 @@ Workers route cards to other workers on the same board using the `route_card` to
 ### Setup
 
 ```bash
-git clone https://github.com/yourusername/karavan.git && cd karavan
+git clone https://github.com/Catastropha/karavan.git && cd karavan
 cp .env.example .env          # fill in API credentials
 cp config.json.example config.json  # configure boards and workers
 ```
