@@ -1,5 +1,7 @@
 # Karavan
 
+A caravan of camels(agents)
+
 Turn Trello boards into autonomous AI agent workflows. Talk to an orchestrator via Telegram, it breaks work into Trello cards, worker agents pick them up and execute — writing code, reviewing PRs, researching ideas, or planning tasks.
 
 ```
@@ -272,6 +274,4 @@ The orchestrator reads your repos, proposes a plan, and on approval creates Trel
 
 Python 3.12+ · FastAPI · Claude Agent SDK · Trello API · Telegram Bot API · GitHub API · httpx
 
-## License
-
-MIT
+Have fun like a camel! While you can
