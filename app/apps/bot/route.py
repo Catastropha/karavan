@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Header, Request
 
 from app.apps.bot.model.input import TelegramUpdate
 from app.apps.bot.model.output import HookTelegramPostOut
@@ -26,13 +26,16 @@ def set_orchestrator_queue(queue: asyncio.Queue[BotMessage]) -> None:
 
 
 @router.post(
-    "/telegram/{secret}",
+    "/telegram",
     response_model=HookTelegramPostOut,
     include_in_schema=False,
 )
-async def telegram_webhook(secret: str, request: Request) -> HookTelegramPostOut:
+async def telegram_webhook(
+    request: Request,
+    x_telegram_bot_api_secret_token: str = Header(default=""),
+) -> HookTelegramPostOut:
     """Receive Telegram webhook updates. Always returns 200 to prevent retries."""
-    if not verify_secret(secret, settings.telegram_secret):
+    if not verify_secret(x_telegram_bot_api_secret_token, settings.telegram_secret):
         logger.warning("Invalid Telegram webhook secret")
         return HookTelegramPostOut()
 

@@ -39,6 +39,9 @@ def _make_request(body: dict | bytes) -> MagicMock:
     return request
 
 
+SECRET = "test_secret"
+
+
 # --- telegram_webhook ---
 
 
@@ -48,9 +51,9 @@ class TestTelegramWebhook:
         request = _make_request(VALID_UPDATE)
 
         with patch("app.apps.bot.route.settings") as mock_settings:
-            mock_settings.telegram_secret = "test_secret"
+            mock_settings.telegram_secret = SECRET
             mock_settings.telegram_allowed_user_ids = [123456789]
-            result = await telegram_webhook("test_secret", request)
+            result = await telegram_webhook(request, x_telegram_bot_api_secret_token=SECRET)
 
         assert isinstance(result, HookTelegramPostOut)
         assert result.ok is True
@@ -68,7 +71,7 @@ class TestTelegramWebhook:
 
         with patch("app.apps.bot.route.settings") as mock_settings:
             mock_settings.telegram_secret = "real_secret"
-            result = await telegram_webhook("wrong_secret", request)
+            result = await telegram_webhook(request, x_telegram_bot_api_secret_token="wrong_secret")
 
         assert result.ok is True
         assert orchestrator_queue.empty()
@@ -83,8 +86,8 @@ class TestTelegramWebhook:
         request.json = async_json
 
         with patch("app.apps.bot.route.settings") as mock_settings:
-            mock_settings.telegram_secret = "test_secret"
-            result = await telegram_webhook("test_secret", request)
+            mock_settings.telegram_secret = SECRET
+            result = await telegram_webhook(request, x_telegram_bot_api_secret_token=SECRET)
 
         assert result.ok is True
         assert orchestrator_queue.empty()
@@ -95,8 +98,8 @@ class TestTelegramWebhook:
         request = _make_request(update)
 
         with patch("app.apps.bot.route.settings") as mock_settings:
-            mock_settings.telegram_secret = "test_secret"
-            result = await telegram_webhook("test_secret", request)
+            mock_settings.telegram_secret = SECRET
+            result = await telegram_webhook(request, x_telegram_bot_api_secret_token=SECRET)
 
         assert result.ok is True
         assert orchestrator_queue.empty()
@@ -115,9 +118,9 @@ class TestTelegramWebhook:
         request = _make_request(update)
 
         with patch("app.apps.bot.route.settings") as mock_settings:
-            mock_settings.telegram_secret = "test_secret"
+            mock_settings.telegram_secret = SECRET
             mock_settings.telegram_allowed_user_ids = [123456789]
-            result = await telegram_webhook("test_secret", request)
+            result = await telegram_webhook(request, x_telegram_bot_api_secret_token=SECRET)
 
         assert result.ok is True
         assert orchestrator_queue.empty()
@@ -135,8 +138,8 @@ class TestTelegramWebhook:
         request = _make_request(update)
 
         with patch("app.apps.bot.route.settings") as mock_settings:
-            mock_settings.telegram_secret = "test_secret"
-            result = await telegram_webhook("test_secret", request)
+            mock_settings.telegram_secret = SECRET
+            result = await telegram_webhook(request, x_telegram_bot_api_secret_token=SECRET)
 
         assert result.ok is True
         assert orchestrator_queue.empty()
@@ -155,9 +158,9 @@ class TestTelegramWebhook:
         request = _make_request(update)
 
         with patch("app.apps.bot.route.settings") as mock_settings:
-            mock_settings.telegram_secret = "test_secret"
+            mock_settings.telegram_secret = SECRET
             mock_settings.telegram_allowed_user_ids = [123456789]
-            result = await telegram_webhook("test_secret", request)
+            result = await telegram_webhook(request, x_telegram_bot_api_secret_token=SECRET)
 
         assert result.ok is True
         assert orchestrator_queue.empty()
@@ -168,9 +171,9 @@ class TestTelegramWebhook:
         request = _make_request(VALID_UPDATE)
 
         with patch("app.apps.bot.route.settings") as mock_settings:
-            mock_settings.telegram_secret = "test_secret"
+            mock_settings.telegram_secret = SECRET
             mock_settings.telegram_allowed_user_ids = [123456789]
-            result = await telegram_webhook("test_secret", request)
+            result = await telegram_webhook(request, x_telegram_bot_api_secret_token=SECRET)
 
         assert result.ok is True
 
@@ -179,9 +182,9 @@ class TestTelegramWebhook:
         request = _make_request(VALID_UPDATE)
 
         with patch("app.apps.bot.route.settings") as mock_settings:
-            mock_settings.telegram_secret = "test_secret"
+            mock_settings.telegram_secret = SECRET
             mock_settings.telegram_allowed_user_ids = [123456789]
-            result = await telegram_webhook("test_secret", request)
+            result = await telegram_webhook(request, x_telegram_bot_api_secret_token=SECRET)
 
         assert isinstance(result, HookTelegramPostOut)
 
@@ -199,9 +202,9 @@ class TestTelegramWebhook:
         request = _make_request(update)
 
         with patch("app.apps.bot.route.settings") as mock_settings:
-            mock_settings.telegram_secret = "test_secret"
+            mock_settings.telegram_secret = SECRET
             mock_settings.telegram_allowed_user_ids = [123456789]
-            result = await telegram_webhook("test_secret", request)
+            result = await telegram_webhook(request, x_telegram_bot_api_secret_token=SECRET)
 
         assert result.ok is True
         msg = orchestrator_queue.get_nowait()
@@ -213,9 +216,9 @@ class TestTelegramWebhook:
         request = _make_request(VALID_UPDATE)
 
         with patch("app.apps.bot.route.settings") as mock_settings:
-            mock_settings.telegram_secret = "test_secret"
+            mock_settings.telegram_secret = SECRET
             mock_settings.telegram_allowed_user_ids = [123456789]
-            await telegram_webhook("test_secret", request)
+            await telegram_webhook(request, x_telegram_bot_api_secret_token=SECRET)
 
         msg = orchestrator_queue.get_nowait()
         assert msg.tp == "telegram"

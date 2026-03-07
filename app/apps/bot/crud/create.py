@@ -45,11 +45,15 @@ async def send_typing_action(chat_id: int) -> None:
 
 async def register_telegram_webhook() -> dict:
     """Register the Telegram webhook via setWebhook API."""
-    url = f"{settings.webhook_base_url}/telegram/{settings.telegram_secret}"
+    url = f"{settings.webhook_base_url}/telegram"
     resp = await res.telegram_client.post(
         "setWebhook",
-        json={"url": url, "allowed_updates": ["message"]},
+        json={
+            "url": url,
+            "allowed_updates": ["message"],
+            "secret_token": settings.telegram_secret,
+        },
     )
     resp.raise_for_status()
-    logger.info("Registered Telegram webhook at %s/telegram/***", settings.webhook_base_url)
+    logger.info("Registered Telegram webhook at %s/telegram", settings.webhook_base_url)
     return resp.json()

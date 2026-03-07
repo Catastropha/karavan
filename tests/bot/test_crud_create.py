@@ -124,8 +124,9 @@ class TestRegisterTelegramWebhook:
         call_args = telegram_client.post.call_args
         assert call_args.args[0] == "setWebhook"
         payload = call_args.kwargs["json"]
-        assert payload["url"] == "https://agents.example.com/telegram/my_secret"
+        assert payload["url"] == "https://agents.example.com/telegram"
         assert payload["allowed_updates"] == ["message"]
+        assert payload["secret_token"] == "my_secret"
 
     async def test_raises_on_failure(self, telegram_client, make_response):
         """Raises when Telegram API returns an error."""
